@@ -17,6 +17,13 @@ IKdfOperations createLocalKdfOperations({
   required void Function(String) logCallback,
   required LocalConfig config,
 }) {
+  // The Linux GUI uses a separately installed KDF executable.
+  if (Platform.isLinux) {
+    return KdfOperationsLocalExecutable.create(
+      logCallback: logCallback,
+      config: config,
+    );
+  }
   try {
     return KdfOperationsNativeLibrary.create(
       logCallback: logCallback,

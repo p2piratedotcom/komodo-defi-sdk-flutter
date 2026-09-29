@@ -83,9 +83,7 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
       );
     }
 
-    // specifically needed on linux, which currently resets the file permissions
-    // on every build.
-    await _tryGrantExecutablePermissions(executablePath);
+    await _verifyExecutablePermissions(executablePath);
 
     if (!params.containsKey('coins')) {
       throw ArgumentError.value(
@@ -141,14 +139,13 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
     }
   }
 
-  /// check if the executable has executable permissions on linux/macos
-  /// if not, run chmod +x on it
-  Future<void> _tryGrantExecutablePermissions(String executablePath) async {
+  /// A separately installed executable is owned by its installer, not the GUI.
+  Future<void> _verifyExecutablePermissions(String executablePath) async {
     if (Platform.isLinux || Platform.isMacOS) {
-      final result = await Process.run('chmod', ['+x', executablePath]);
+      final result = await Process.run('test', ['-x', executablePath]);
       if (result.exitCode != 0) {
         throw KdfException(
-          'Failed to make executable executable: ${result.stderr}',
+          'KDF is not executable: $executablePath',
           type: KdfExceptionType.permissionError,
           stackTrace: StackTrace.current,
         );
