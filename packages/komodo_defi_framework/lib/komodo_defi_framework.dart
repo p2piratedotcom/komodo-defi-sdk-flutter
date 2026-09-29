@@ -128,6 +128,14 @@ class KomodoDefiFramework implements ApiClient {
   }) async {
     _log('Starting KDF main...');
 
+    if (startupConfig.netid != kPirateKdfNetId) {
+      throw StateError(
+        'P2Pirate requires KDF netid $kPirateKdfNetId; '
+        'received ${startupConfig.netid}',
+      );
+    }
+    _log('Using KDF netid: ${startupConfig.netid}');
+
     if (validateHostConfig) {
       _assertHostConfigMatchesStartupConfig(startupConfig, _hostConfig);
     }

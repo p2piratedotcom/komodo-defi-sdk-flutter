@@ -45,6 +45,10 @@ class SeedNodeService {
         config: config,
       );
 
+      if (netId != kPirateKdfNetId) {
+        throw StateError('Unexpected seed-node netid: $netId');
+      }
+
       return (
         seedNodes: SeedNodeUpdater.seedNodesToStringList(nodes),
         netId: netId,
