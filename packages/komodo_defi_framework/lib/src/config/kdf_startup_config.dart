@@ -97,6 +97,13 @@ class KdfStartupConfig {
     bool? isBootstrapNode,
     EventStreamingConfiguration? eventStreamingConfiguration,
   }) async {
+    if (netid != kPirateKdfNetId) {
+      throw ArgumentError.value(
+        netid,
+        'netid',
+        'P2Pirate requires KDF netid $kPirateKdfNetId',
+      );
+    }
     assert(
       !kIsWeb || userHome == null && dbDir == null,
       'Web does not support userHome or dbDir',
@@ -178,8 +185,7 @@ class KdfStartupConfig {
   }) async {
     final (String? home, String? dbDir) = await _getAndSetupUserHome();
 
-    final (seedNodes: seeds, netId: netId) =
-        await SeedNodeService.fetchSeedNodes();
+    final (seedNodes: seeds, netId: _) = await SeedNodeService.fetchSeedNodes();
 
     return KdfStartupConfig._(
       walletName: null,
@@ -189,7 +195,7 @@ class KdfStartupConfig {
       userHome: home,
       dbDir: dbDir,
       allowWeakPassword: true,
-      netid: netId,
+      netid: kPirateKdfNetId,
       gui: 'komodo-defi-flutter-auth',
       coins: await _fetchCoinsData(),
       https: false,
