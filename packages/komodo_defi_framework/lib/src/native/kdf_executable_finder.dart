@@ -69,7 +69,7 @@ class KdfExecutableFinder {
     ]);
 
     final files = [
-      if (home != null && home.isNotEmpty)
+      if (Platform.isLinux && home != null && home.isNotEmpty)
         p.join(
           home,
           '.local',
@@ -83,23 +83,24 @@ class KdfExecutableFinder {
       '/usr/bin/$executableName',
       if (home != null && home.isNotEmpty)
         p.join(home, '.local', 'bin', executableName),
-      p.join(Directory.current.path, executableName),
-      p.join(Directory.current.path, '$executableName.exe'),
-      p.join(Directory.current.path, 'lib/$executableName'),
-      p.join(Directory.current.path, 'lib/$executableName.exe'),
-      macosHelpersInFrameworkPath,
-      constructWindowsBuildArtifactPath(
-        mode: currentBuildMode,
-        executableName: executableName,
-      ),
-      constructLinuxBuildArtifactPath(
-        mode: currentBuildMode,
-        executableName: executableName,
-      ),
-      constructMacOsBuildArtifactPath(
-        mode: currentBuildMode,
-        executableName: executableName,
-      ),
+      if (!Platform.isLinux) p.join(Directory.current.path, executableName),
+      if (!Platform.isLinux)
+        p.join(Directory.current.path, '$executableName.exe'),
+      if (!Platform.isLinux)
+        p.join(Directory.current.path, 'lib/$executableName'),
+      if (!Platform.isLinux)
+        p.join(Directory.current.path, 'lib/$executableName.exe'),
+      if (!Platform.isLinux) macosHelpersInFrameworkPath,
+      if (!Platform.isLinux)
+        constructWindowsBuildArtifactPath(
+          mode: currentBuildMode,
+          executableName: executableName,
+        ),
+      if (!Platform.isLinux)
+        constructMacOsBuildArtifactPath(
+          mode: currentBuildMode,
+          executableName: executableName,
+        ),
     ].map((path) => File(p.normalize(path))).toList();
 
     for (final file in files) {
