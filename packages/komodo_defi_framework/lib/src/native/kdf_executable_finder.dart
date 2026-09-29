@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
@@ -34,6 +35,29 @@ class KdfExecutableFinder {
   /// Attempts to find the KDF executable in standard and platform-specific
   /// locations
   Future<File?> findExecutable({String executableName = 'kdf'}) async {
+    final configuredPath = Platform.environment['P2PIRATE_KDF_PATH']?.trim();
+    final home = Platform.environment['HOME'];
+    if (Platform.isLinux &&
+        configuredPath != null &&
+        configuredPath.isNotEmpty) {
+      if (!p.isAbsolute(configuredPath)) {
+        throw ArgumentError.value(
+          configuredPath,
+          'P2PIRATE_KDF_PATH',
+          'Expected an absolute path to the separately installed KDF',
+        );
+      }
+      final configuredFile = File(p.normalize(configuredPath));
+      if (!configuredFile.existsSync()) {
+        throw FileSystemException(
+          'Configured KDF executable was not found',
+          configuredPath,
+        );
+      }
+      logCallback('Using configured KDF executable: ${configuredFile.path}');
+      return configuredFile.absolute;
+    }
+
     final macosHelpersInFrameworkPath = p.joinAll([
       p.dirname(p.dirname(Platform.resolvedExecutable)),
       'Frameworks',
@@ -45,8 +69,20 @@ class KdfExecutableFinder {
     ]);
 
     final files = [
+      if (home != null && home.isNotEmpty)
+        p.join(
+          home,
+          '.local',
+          'share',
+          'p2pirate',
+          'kdf',
+          'current',
+          executableName,
+        ),
       '/usr/local/bin/$executableName',
       '/usr/bin/$executableName',
+      if (home != null && home.isNotEmpty)
+        p.join(home, '.local', 'bin', executableName),
       p.join(Directory.current.path, executableName),
       p.join(Directory.current.path, '$executableName.exe'),
       p.join(Directory.current.path, 'lib/$executableName'),
