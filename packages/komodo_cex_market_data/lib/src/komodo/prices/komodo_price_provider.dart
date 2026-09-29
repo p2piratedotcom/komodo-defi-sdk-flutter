@@ -11,11 +11,9 @@ abstract class IKomodoPriceProvider {
 
 /// A class for fetching prices from Komodo API.
 class KomodoPriceProvider implements IKomodoPriceProvider {
-  /// Creates a new instance of [KomodoPriceProvider].
-  KomodoPriceProvider({
-    this.mainTickersUrl =
-        'https://defistats.gleec.com/api/v3/prices/tickers_v2?expire_at=600',
-  });
+  /// Creates a provider with no third-party price endpoint by default.
+  /// A caller can supply a URL explicitly when this source is wanted.
+  KomodoPriceProvider({this.mainTickersUrl = ''});
 
   /// The URL to fetch the main tickers from.
   final String mainTickersUrl;
@@ -33,9 +31,10 @@ class KomodoPriceProvider implements IKomodoPriceProvider {
   /// ```
   @override
   Future<Map<String, AssetMarketInformation>> getKomodoPrices() async {
+    if (mainTickersUrl.isEmpty) return const {};
     final mainUri = Uri.parse(mainTickersUrl);
 
-    final res = await http.get(mainUri);
+    final res = await http.get(mainUri).timeout(const Duration(seconds: 10));
 
     if (res.statusCode != 200) {
       throw Exception(
