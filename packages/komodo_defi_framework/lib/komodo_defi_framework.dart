@@ -16,6 +16,7 @@ export 'package:komodo_defi_framework/src/config/event_streaming_config.dart';
 export 'package:komodo_defi_framework/src/config/kdf_config.dart';
 export 'package:komodo_defi_framework/src/config/kdf_logging_config.dart';
 export 'package:komodo_defi_framework/src/config/kdf_startup_config.dart';
+export 'package:komodo_defi_framework/src/config/kdf_tor_config.dart';
 export 'package:komodo_defi_framework/src/services/seed_node_service.dart';
 export 'package:komodo_defi_framework/src/streaming/event_streaming_service.dart';
 export 'package:komodo_defi_framework/src/streaming/events/kdf_event.dart';

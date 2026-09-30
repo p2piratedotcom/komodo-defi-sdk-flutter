@@ -2,7 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show AssetBundle, rootBundle;
 import 'package:komodo_coin_updates/komodo_coin_updates.dart';
 import 'package:komodo_defi_framework/src/config/kdf_logging_config.dart';
+import 'package:komodo_defi_framework/src/config/kdf_tor_config.dart';
 import 'package:komodo_defi_framework/src/config/seed_node_validator.dart';
+import 'package:komodo_defi_framework/src/services/tor_seed_resolver.dart';
 import 'package:komodo_defi_types/komodo_defi_type_utils.dart';
 import 'package:komodo_defi_types/komodo_defi_types.dart';
 
@@ -35,6 +37,11 @@ class SeedNodeService {
   static Future<({List<String> seedNodes, int netId})> fetchSeedNodes({
     bool filterForWeb = kIsWeb,
   }) async {
+    if (KdfTorConfig.enabled) {
+      final bundled = await loadBundledSeedNodes(filterForWeb: false);
+      final resolved = await TorSeedResolver.resolveAll(bundled);
+      return (seedNodes: resolved, netId: kPirateKdfNetId);
+    }
     try {
       final config = await _getRuntimeConfig();
       final (
