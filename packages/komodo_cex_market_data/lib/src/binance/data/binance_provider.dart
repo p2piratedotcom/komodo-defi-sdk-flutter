@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -15,6 +16,34 @@ class BinanceProvider implements IBinanceProvider {
   /// The base URL for the Binance API.
   /// Defaults to 'https://api.binance.com/api/v3'.
   final String apiUrl;
+
+  static DateTime? _retryAfter;
+  static const requestTimeout = Duration(seconds: 4);
+
+  Future<http.Response> _get(Uri uri) async {
+    if (_retryAfter?.isAfter(DateTime.now()) ?? false) {
+      throw http.ClientException('Binance temporarily unavailable');
+    }
+    _retryAfter = null;
+    final client = http.Client();
+    try {
+      final response = await client.get(uri).timeout(requestTimeout);
+      if ([403, 429, 451].contains(response.statusCode)) {
+        _retryAfter = DateTime.now().add(const Duration(minutes: 5));
+        throw http.ClientException('Binance HTTP ${response.statusCode}');
+      }
+      return response;
+    } on TimeoutException {
+      _retryAfter = DateTime.now().add(const Duration(minutes: 1));
+      rethrow;
+    } on http.ClientException {
+      _retryAfter ??= DateTime.now().add(const Duration(minutes: 1));
+      rethrow;
+    } finally {
+      // Closing also aborts a timed-out connection instead of leaving it running.
+      client.close();
+    }
+  }
 
   @override
   Future<CoinOhlc> fetchKlines(
@@ -40,7 +69,7 @@ class BinanceProvider implements IBinanceProvider {
       '$baseRequestUrl/klines',
     ).replace(queryParameters: queryParameters);
 
-    final response = await http.get(uri);
+    final response = await _get(uri);
     if (response.statusCode == 200) {
       return CoinOhlc.fromJson(
         jsonDecode(response.body) as List<dynamic>,
@@ -59,7 +88,7 @@ class BinanceProvider implements IBinanceProvider {
     String? baseUrl,
   }) async {
     final requestUrl = baseUrl ?? apiUrl;
-    final response = await http.get(Uri.parse('$requestUrl/exchangeInfo'));
+    final response = await _get(Uri.parse('$requestUrl/exchangeInfo'));
 
     if (response.statusCode == 200) {
       return BinanceExchangeInfoResponse.fromJson(
@@ -77,7 +106,7 @@ class BinanceProvider implements IBinanceProvider {
     String? baseUrl,
   }) async {
     final requestUrl = baseUrl ?? apiUrl;
-    final response = await http.get(Uri.parse('$requestUrl/exchangeInfo'));
+    final response = await _get(Uri.parse('$requestUrl/exchangeInfo'));
 
     if (response.statusCode == 200) {
       return BinanceExchangeInfoResponseReduced.fromJson(
@@ -109,7 +138,7 @@ class BinanceProvider implements IBinanceProvider {
       '$baseRequestUrl/ticker/24hr',
     ).replace(queryParameters: queryParameters);
 
-    final response = await http.get(uri);
+    final response = await _get(uri);
     if (response.statusCode == 200) {
       return Binance24hrTicker.fromJson(
         jsonDecode(response.body) as Map<String, dynamic>,

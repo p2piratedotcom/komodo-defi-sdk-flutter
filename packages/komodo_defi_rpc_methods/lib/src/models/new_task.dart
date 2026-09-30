@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:komodo_defi_rpc_methods/src/internal_exports.dart';
 import 'package:komodo_defi_types/komodo_defi_type_utils.dart';
 
@@ -12,13 +14,13 @@ class TaskStatusRequest
   final int taskId;
 
   @override
-  Map<String, dynamic> toJson() =>
-      super.toJson()..addAll({
-        'userpass': rpcPass,
-        'mmrpc': mmrpc,
-        'method': method,
-        'params': {'task_id': taskId, 'forget_if_finished': false},
-      });
+  Map<String, dynamic> toJson() => super.toJson()
+    ..addAll({
+      'userpass': rpcPass,
+      'mmrpc': mmrpc,
+      'method': method,
+      'params': {'task_id': taskId, 'forget_if_finished': false},
+    });
 
   @override
   TaskStatusResponse parse(Map<String, dynamic> json) {
@@ -36,10 +38,17 @@ class TaskStatusResponse extends BaseResponse {
 
   @override
   factory TaskStatusResponse.parse(Map<String, dynamic> json) {
+    final rawDetails = json.valueOrNull<dynamic>('result', 'details');
     return TaskStatusResponse(
       mmrpc: json.value<String>('mmrpc'),
       status: json.value<String>('result', 'status'),
-      details: json.value<String>('result', 'details'),
+      // KDF can return structured details on completion. Keep the public
+      // response type stable for task progress consumers.
+      details: rawDetails is String
+          ? rawDetails
+          : rawDetails == null
+          ? ''
+          : jsonEncode(rawDetails),
       isCompleted: json.value<String>('result', 'status') == 'Ok',
     );
   }

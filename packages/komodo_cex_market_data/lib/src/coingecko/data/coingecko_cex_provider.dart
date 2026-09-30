@@ -146,6 +146,7 @@ class CoinGeckoCexProvider implements ICoinGeckoProvider {
   final String apiVersion;
 
   static final Logger _logger = Logger('CoinGeckoCexProvider');
+  DateTime? _pricesRetryAfter;
 
   /// Fetches the list of coins supported by CoinGecko.
   ///
@@ -480,19 +481,38 @@ class CoinGeckoCexProvider implements ICoinGeckoProvider {
     List<String> coinGeckoIds, {
     List<String> vsCurrencies = const <String>['usd'],
   }) async {
-    final currencies = vsCurrencies.join(',');
-    coinGeckoIds.removeWhere((String id) => id.isEmpty);
+    if (vsCurrencies.length != 1) {
+      throw ArgumentError('Price response requires exactly one quote currency');
+    }
+    if (_pricesRetryAfter?.isAfter(DateTime.now()) ?? false) {
+      throw Exception('CoinGecko rate limit (429): waiting before retry');
+    }
+    final currency = vsCurrencies.single.toLowerCase();
 
     final tickersUrl = Uri.https(baseUrl, '$apiVersion/simple/price', {
-      'ids': coinGeckoIds.join(','),
-      'vs_currencies': currencies,
+      'ids': coinGeckoIds.where((id) => id.isNotEmpty).toSet().join(','),
+      'vs_currencies': currency,
+      'include_24hr_change': 'true',
     });
 
-    final res = await http.get(tickersUrl);
+    final client = http.Client();
+    late final http.Response res;
+    try {
+      res = await client.get(tickersUrl).timeout(const Duration(seconds: 9));
+    } finally {
+      client.close();
+    }
     final body = res.body;
 
     // Check for HTTP errors first
     if (res.statusCode != 200) {
+      if (res.statusCode == 429) {
+        final retrySeconds =
+            int.tryParse(res.headers['retry-after'] ?? '') ?? 300;
+        _pricesRetryAfter = DateTime.now().add(
+          Duration(seconds: retrySeconds.clamp(60, 3600)),
+        );
+      }
       _throwApiErrorOrException(res, 'price data fetch');
     }
 
@@ -507,8 +527,8 @@ class CoinGeckoCexProvider implements ICoinGeckoProvider {
         return;
       }
 
-      // TODO(Francois): map to multiple currencies, or only allow 1 vs currency
-      final price = (pricesData as Map<String, dynamic>)['usd'] as num?;
+      final data = pricesData as Map<String, dynamic>;
+      final price = data[currency] as num?;
 
       // Parse price with explicit error handling
       Decimal parsedPrice;
@@ -518,9 +538,7 @@ class CoinGeckoCexProvider implements ICoinGeckoProvider {
         _logger.warning(
           'CoinGecko API returned null or empty price for $coingeckoId',
         );
-        throw Exception(
-          'Invalid price data for $coingeckoId: received null or empty value',
-        );
+        return;
       }
 
       final tempPrice = Decimal.tryParse(priceString);
@@ -539,6 +557,7 @@ class CoinGeckoCexProvider implements ICoinGeckoProvider {
       prices[coingeckoId] = AssetMarketInformation(
         ticker: coingeckoId,
         lastPrice: parsedPrice,
+        change24h: Decimal.tryParse('${data['${currency}_24h_change']}'),
       );
     });
 
