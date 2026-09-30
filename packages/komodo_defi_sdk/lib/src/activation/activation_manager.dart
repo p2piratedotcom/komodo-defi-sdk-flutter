@@ -367,8 +367,24 @@ class ActivationManager {
             await _assetsUpdateManager.assets.storeCustomToken(asset);
           }
 
-          // Pre-cache balance for the activated asset
-          await _balanceManager.precacheBalance(asset);
+          // ZHTLC can spend a long time fetching its first shielded balance
+          // after KDF has already reported activation success. Keep the
+          // balance warm-up, but do not hold the completion event behind it.
+          if (asset.id.subClass == CoinSubClass.zhtlc) {
+            unawaited(
+              _balanceManager.precacheBalance(asset).catchError((
+                Object error,
+                StackTrace _,
+              ) {
+                debugPrint(
+                  'Failed to pre-cache ZHTLC balance for ${asset.id.id}: '
+                  '${error.runtimeType}',
+                );
+              }),
+            );
+          } else {
+            await _balanceManager.precacheBalance(asset);
+          }
         }
 
         _activatedAssetsCache.invalidate();
