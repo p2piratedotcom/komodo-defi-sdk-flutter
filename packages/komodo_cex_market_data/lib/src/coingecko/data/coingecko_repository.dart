@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:decimal/decimal.dart';
 import 'package:komodo_cex_market_data/src/cex_repository.dart';
 import 'package:komodo_cex_market_data/src/coingecko/_coingecko_index.dart';
@@ -38,6 +40,63 @@ class CoinGeckoRepository implements CexRepository {
   /// the cooldown period has elapsed.
   DateTime? _lastCoinListFailure;
   static const _coinListFailureCooldown = Duration(minutes: 5);
+  final _pendingPrices = <String, Completer<AssetMarketInformation>>{};
+  final _queuedPrices = <String, Set<String>>{};
+  final _currentPrices = <String, (DateTime, AssetMarketInformation)>{};
+  Timer? _batchTimer;
+
+  Future<AssetMarketInformation> _currentPrice(String id, String currency) {
+    final key = '$currency:$id';
+    final cached = _currentPrices[key];
+    if (cached != null &&
+        DateTime.now().difference(cached.$1) < const Duration(minutes: 1)) {
+      return Future.value(cached.$2);
+    }
+    final pending = _pendingPrices[key];
+    if (pending != null) return pending.future;
+    final completer = Completer<AssetMarketInformation>();
+    _pendingPrices[key] = completer;
+    (_queuedPrices[currency] ??= {}).add(id);
+    _batchTimer ??= Timer(const Duration(milliseconds: 200), _flushPrices);
+    return completer.future;
+  }
+
+  Future<void> _flushPrices() async {
+    _batchTimer = null;
+    final batches = Map<String, Set<String>>.of(_queuedPrices);
+    _queuedPrices.clear();
+    for (final batch in batches.entries) {
+      final ids = batch.value.toList();
+      for (var start = 0; start < ids.length; start += 100) {
+        final chunk = ids.sublist(
+          start,
+          start + 100 > ids.length ? ids.length : start + 100,
+        );
+        try {
+          final values = await coinGeckoProvider
+              .fetchCoinPrices(chunk, vsCurrencies: [batch.key])
+              .timeout(const Duration(seconds: 10));
+          for (final id in chunk) {
+            final key = '${batch.key}:$id';
+            final completer = _pendingPrices.remove(key)!;
+            final value = values[id];
+            if (value == null || value.lastPrice <= Decimal.zero) {
+              completer.completeError(StateError('Current price unavailable'));
+            } else {
+              _currentPrices[key] = (DateTime.now(), value);
+              completer.complete(value);
+            }
+          }
+        } catch (error, stack) {
+          for (final id in chunk) {
+            _pendingPrices
+                .remove('${batch.key}:$id')
+                ?.completeError(error, stack);
+          }
+        }
+      }
+    }
+  }
 
   /// Fetches the CoinGecko market data.
   ///
@@ -211,9 +270,13 @@ class CoinGeckoRepository implements CexRepository {
     final tradingSymbol = resolveTradingSymbol(assetId);
     final mappedFiatId = fiatCurrency.coinGeckoId;
 
+    if (priceDate == null) {
+      return (await _currentPrice(tradingSymbol, mappedFiatId)).lastPrice;
+    }
+
     final coinPrice = await coinGeckoProvider.fetchCoinHistoricalMarketData(
       id: tradingSymbol,
-      date: priceDate ?? DateTime.now(),
+      date: priceDate,
     );
 
     return _extractPriceFromResponse(coinPrice, mappedFiatId);
@@ -316,15 +379,10 @@ class CoinGeckoRepository implements CexRepository {
       throw ArgumentError('Coin and fiat coin cannot be the same');
     }
 
-    final priceData = await coinGeckoProvider.fetchCoinMarketData(
-      ids: [tradingSymbol],
-      vsCurrency: mappedFiatId, // Use mapped fiat currency
-    );
-    if (priceData.length != 1) {
-      throw Exception('Invalid market data for $tradingSymbol');
-    }
-
-    final priceChange = priceData.first.priceChangePercentage24h;
+    final priceChange = (await _currentPrice(
+      tradingSymbol,
+      mappedFiatId,
+    )).change24h;
     if (priceChange == null) {
       throw Exception('Price change data not available for $tradingSymbol');
     }

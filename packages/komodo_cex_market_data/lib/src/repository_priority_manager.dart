@@ -14,8 +14,8 @@ class RepositoryPriorityManager {
   static const Map<Type, int> defaultPriorities = {
     KomodoPriceRepository: 1,
     BinanceRepository: 2,
-    CoinPaprikaRepository: 3,
-    CoinGeckoRepository: 4,
+    CoinGeckoRepository: 3,
+    CoinPaprikaRepository: 4,
   };
 
   /// Priority map optimized for sparkline data fetching.
