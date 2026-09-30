@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:komodo_defi_framework/src/config/kdf_config.dart';
+import 'package:komodo_defi_framework/src/config/kdf_tor_config.dart';
 import 'package:komodo_defi_framework/src/exceptions/kdf_exception.dart';
 import 'package:komodo_defi_framework/src/native/kdf_executable_finder.dart';
 import 'package:komodo_defi_framework/src/operations/kdf_operations_interface.dart';
@@ -111,6 +112,21 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
 
       final environment = Map<String, String>.of(Platform.environment)
         ..['MM_COINS_PATH'] = coinsConfigFile.path;
+
+      if (KdfTorConfig.enabled) {
+        KdfTorConfig.ensureConfigured();
+        final libraryPath = KdfTorConfig.torsocksLibraryPath!;
+        final configPath = KdfTorConfig.torsocksConfigPath!;
+        if (!File(libraryPath).existsSync() || !File(configPath).existsSync()) {
+          throw StateError('Tor KDF transport files are missing');
+        }
+        environment['LD_PRELOAD'] = libraryPath;
+        environment['TORSOCKS_CONF_FILE'] = configPath;
+        _logCallback(
+          'Starting KDF NetID ${params['netid']} via Tor SOCKS on '
+          '127.0.0.1:${KdfTorConfig.socksPort}',
+        );
+      }
 
       final newProcess = await Process.start(executablePath, [
         sensitiveArgs.toJsonString(),
