@@ -32,7 +32,7 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
       logCallback,
       KdfOperationsRemote.create(
         logCallback: logCallback,
-        rpcUrl: _url,
+        rpcUrl: Uri(scheme: 'http', host: '127.0.0.1', port: config.rpcPort),
         userpass: config.rpcPassword,
       ),
       startupTimeout: startupTimeout,
@@ -69,8 +69,6 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
       return false;
     }
   }
-
-  static final Uri _url = Uri.parse('http://127.0.0.1:7783');
 
   Future<Process> _startKdf(JsonMap params) async {
     final executablePath = (await _executableFinder.findExecutable(

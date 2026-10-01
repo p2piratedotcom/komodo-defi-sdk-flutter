@@ -46,7 +46,6 @@ class KdfOperationsNativeLibrary implements IKdfOperations {
     this._config,
     this._log,
   );
-  @override
   factory KdfOperationsNativeLibrary.create({
     required void Function(String)? logCallback,
     required LocalConfig config,
@@ -265,7 +264,7 @@ class KdfOperationsNativeLibrary implements IKdfOperations {
   // Use 127.0.0.1 instead of localhost to avoid DNS resolution issues on mobile
   // platforms, especially after app backgrounding. See:
   // https://github.com/GLEECBTC/gleec-wallet/issues/3213
-  final Uri _url = Uri.parse('http://127.0.0.1:7783');
+  Uri get _url => Uri(scheme: 'http', host: '127.0.0.1', port: _config.rpcPort);
   Client _client = Client();
 
   @override

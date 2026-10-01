@@ -44,18 +44,19 @@ class KomodoDefiFramework implements ApiClient {
     return KomodoDefiFramework._(
       hostConfig: hostConfig,
       externalLogger: externalLogger,
+      kdfOperations: kdfOperations,
       // client: KdfApiClient(this, rpcPassword: hostConfig.rpcPassword),
-    ).._kdfOperations = kdfOperations;
+    );
   }
   KomodoDefiFramework._({
     required IKdfHostConfig hostConfig,
     void Function(String)? externalLogger,
+    IKdfOperations? kdfOperations,
     // required KdfApiClient? client,
   }) : _hostConfig = hostConfig {
-    _kdfOperations = createKdfOperations(
-      hostConfig: hostConfig,
-      logCallback: _log,
-    );
+    _kdfOperations =
+        kdfOperations ??
+        createKdfOperations(hostConfig: hostConfig, logCallback: _log);
 
     if (externalLogger != null) {
       _initLogStream(externalLogger);
@@ -197,15 +198,21 @@ class KomodoDefiFramework implements ApiClient {
 
   Future<String?> version() async {
     final stopwatch = Stopwatch()..start();
-    _log('version(): Starting version RPC call via ${_kdfOperations.operationsName}');
+    _log(
+      'version(): Starting version RPC call via ${_kdfOperations.operationsName}',
+    );
     try {
       final version = await _kdfOperations.version();
       stopwatch.stop();
-      _log('version(): Completed in ${stopwatch.elapsedMilliseconds}ms, result=$version');
+      _log(
+        'version(): Completed in ${stopwatch.elapsedMilliseconds}ms, result=$version',
+      );
       return version;
     } catch (e) {
       stopwatch.stop();
-      _log('version(): Failed after ${stopwatch.elapsedMilliseconds}ms with error: $e');
+      _log(
+        'version(): Failed after ${stopwatch.elapsedMilliseconds}ms with error: $e',
+      );
       rethrow;
     }
   }
@@ -214,7 +221,7 @@ class KomodoDefiFramework implements ApiClient {
   /// Returns true if KDF is running and responsive, false otherwise.
   /// This is useful for detecting when KDF has become unavailable, especially
   /// on mobile platforms after app backgrounding.
-  /// 
+  ///
   /// IMPORTANT: This method ONLY relies on actual RPC verification (version() call)
   /// to avoid false positives where native status reports "running" but HTTP listener
   /// is not accepting connections (common after iOS backgrounding).
@@ -226,7 +233,7 @@ class KomodoDefiFramework implements ApiClient {
         _log('KDF health check failed: version call returned null');
         return false;
       }
-      
+
       _log('KDF health check passed: version=$versionCheck');
       return true;
     } catch (e) {
@@ -288,7 +295,7 @@ class KomodoDefiFramework implements ApiClient {
       return response;
     } catch (e) {
       stopwatch.stop();
-      
+
       // Detect transport-fatal SocketExceptions that indicate KDF is down/dying
       // errno 32 (EPIPE): Broken pipe - writing to socket whose peer closed
       // errno 54 (ECONNRESET): Connection reset by peer
@@ -296,18 +303,29 @@ class KomodoDefiFramework implements ApiClient {
       // errno 61 (ECONNREFUSED): Connection refused - no listener on port
       final errorString = e.toString().toLowerCase();
       final isSocketException = errorString.contains('socketexception');
-      final isFatalTransportError = isSocketException && (
-        errorString.contains('broken pipe') || errorString.contains('errno = 32') ||
-        errorString.contains('connection reset') || errorString.contains('errno = 54') ||
-        errorString.contains('operation timed out') || errorString.contains('errno = 60') ||
-        errorString.contains('connection refused') || errorString.contains('errno = 61')
-      );
+      final isFatalTransportError =
+          isSocketException &&
+          (errorString.contains('broken pipe') ||
+              errorString.contains('errno = 32') ||
+              errorString.contains('connection reset') ||
+              errorString.contains('errno = 54') ||
+              errorString.contains('operation timed out') ||
+              errorString.contains('errno = 60') ||
+              errorString.contains('connection refused') ||
+              errorString.contains('errno = 61'));
 
       if (isFatalTransportError) {
-        final errorType = errorString.contains('errno = 32') || errorString.contains('broken pipe') ? 'EPIPE (32)' :
-                         errorString.contains('errno = 54') || errorString.contains('connection reset') ? 'ECONNRESET (54)' :
-                         errorString.contains('errno = 60') || errorString.contains('operation timed out') ? 'ETIMEDOUT (60)' :
-                         'ECONNREFUSED (61)';
+        final errorType =
+            errorString.contains('errno = 32') ||
+                errorString.contains('broken pipe')
+            ? 'EPIPE (32)'
+            : errorString.contains('errno = 54') ||
+                  errorString.contains('connection reset')
+            ? 'ECONNRESET (54)'
+            : errorString.contains('errno = 60') ||
+                  errorString.contains('operation timed out')
+            ? 'ETIMEDOUT (60)'
+            : 'ECONNREFUSED (61)';
         _logger.severe(
           '[RPC] ${method ?? 'unknown'} failed: KDF transport error $errorType. '
           'Resetting HTTP client to drop stale connections.',
@@ -460,6 +478,11 @@ class KomodoDefiFramework implements ApiClient {
           'RPC port mismatch between startup and host configs.',
         );
       }
+    } else if (hostConfig is LocalConfig &&
+        startupConfig.rpcPort != hostConfig.rpcPort) {
+      throw ArgumentError(
+        'RPC port mismatch between startup and local host configs.',
+      );
     }
   }
 

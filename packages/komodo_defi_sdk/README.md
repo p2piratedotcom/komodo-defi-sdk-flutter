@@ -62,6 +62,7 @@ final remote = RemoteConfig(
 // SDK behavior
 const config = KomodoDefiSdkConfig(
   defaultAssets: {'KMD', 'BTC', 'ETH', 'DOC'},
+  localRpcPort: 7783, // Change for an isolated local KDF process.
   preActivateDefaultAssets: true,
   preActivateHistoricalAssets: true,
   preActivateCustomTokenAssets: true,

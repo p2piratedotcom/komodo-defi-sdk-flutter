@@ -17,24 +17,29 @@ class LocalConfig extends IKdfHostConfig {
   LocalConfig({
     required super.https,
     required super.rpcPassword,
-  });
+    this.rpcPort = 7783,
+  }) : assert(rpcPort > 0 && rpcPort <= 65535, 'Invalid local RPC port');
+
+  /// Loopback RPC port used by this local KDF instance.
+  final int rpcPort;
 
   factory LocalConfig.fromJson(JsonMap json) {
     return LocalConfig(
       https: json.value<bool>('https'),
       rpcPassword: json.value<String>('rpc_password'),
+      rpcPort: json.valueOrNull<int>('rpc_port') ?? 7783,
     );
   }
 
   @override
-  Map<String, dynamic> getConnectionParams() =>
-      {'https': https, 'rpc_password': rpcPassword};
+  Map<String, dynamic> getConnectionParams() => {
+    'https': https,
+    'rpc_password': rpcPassword,
+    'rpc_port': rpcPort,
+  };
 
   Map<String, dynamic> toJson() {
-    return {
-      'https': https,
-      'rpc_password': rpcPassword,
-    };
+    return {'https': https, 'rpc_password': rpcPassword, 'rpc_port': rpcPort};
   }
 }
 
@@ -63,13 +68,13 @@ class RemoteConfig extends IKdfHostConfig {
 
   @override
   Map<String, dynamic> getConnectionParams() => {
-        'rpcip': '0.0.0.0',
-        'myipaddr': ipAddress,
-        'rpcport': port,
-        'rpc_local_only': false,
-        'rpccors': '*',
-        'userpass': rpcPassword,
-      };
+    'rpcip': '0.0.0.0',
+    'myipaddr': ipAddress,
+    'rpcport': port,
+    'rpc_local_only': false,
+    'rpccors': '*',
+    'userpass': rpcPassword,
+  };
 
   Map<String, dynamic> toJson() {
     return {
@@ -122,17 +127,17 @@ class AwsConfig extends IKdfHostConfig {
 
   @override
   Map<String, dynamic> getConnectionParams() => {
-        'aws_config': {
-          'region': region,
-          'access_key': accessKey,
-          'secret_key': secretKey,
-          'instance_type': instanceType,
-          if (instanceId != null) 'instance_id': instanceId,
-          if (keyName != null) 'key_name': keyName,
-          if (securityGroup != null) 'security_group': securityGroup,
-          if (amiId != null) 'ami_id': amiId,
-        },
-      };
+    'aws_config': {
+      'region': region,
+      'access_key': accessKey,
+      'secret_key': secretKey,
+      'instance_type': instanceType,
+      if (instanceId != null) 'instance_id': instanceId,
+      if (keyName != null) 'key_name': keyName,
+      if (securityGroup != null) 'security_group': securityGroup,
+      if (amiId != null) 'ami_id': amiId,
+    },
+  };
 
   Map<String, dynamic> toJson() {
     return {
@@ -185,15 +190,15 @@ class DigitalOceanConfig extends IKdfHostConfig {
 
   @override
   Map<String, dynamic> getConnectionParams() => {
-        'digitalocean_config': {
-          'api_token': apiToken,
-          if (dropletId != null) 'droplet_id': dropletId,
-          'droplet_region': dropletRegion,
-          'droplet_size': dropletSize,
-          if (sshKeyId != null) 'ssh_key_id': sshKeyId,
-          'image': image,
-        },
-      };
+    'digitalocean_config': {
+      'api_token': apiToken,
+      if (dropletId != null) 'droplet_id': dropletId,
+      'droplet_region': dropletRegion,
+      'droplet_size': dropletSize,
+      if (sshKeyId != null) 'ssh_key_id': sshKeyId,
+      'image': image,
+    },
+  };
 
   Map<String, dynamic> toJson() {
     return {

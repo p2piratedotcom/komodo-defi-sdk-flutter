@@ -119,6 +119,19 @@ class BalanceManager implements IBalanceManager {
   /// Flag indicating if the manager has been disposed
   bool _isDisposed = false;
 
+  /// Invalidates work started for a previous wallet before its async calls finish.
+  int _stateEpoch = 0;
+
+  bool _isCurrentWatcher(
+    AssetId assetId,
+    StreamController<BalanceInfo> controller,
+    int epoch,
+  ) =>
+      !_isDisposed &&
+      !controller.isClosed &&
+      _stateEpoch == epoch &&
+      identical(_balanceControllers[assetId], controller);
+
   /// Getter for activationCoordinator to make it accessible
   SharedActivationCoordinator? get activationCoordinator =>
       _activationCoordinator;
@@ -177,6 +190,10 @@ class BalanceManager implements IBalanceManager {
     _logger.fine('Resetting state');
     final stopwatch = Stopwatch()..start();
 
+    _stateEpoch++;
+    _balanceCache.clear();
+    _pendingFastRefresh.clear();
+
     final List<Future<void>> cleanupFutures = <Future<void>>[];
     final List<StreamSubscription<dynamic>> watcherSubs = _activeWatchers.values
         .toList();
@@ -186,6 +203,16 @@ class BalanceManager implements IBalanceManager {
       cleanupFutures.add(
         subscription.cancel().catchError((Object e, StackTrace s) {
           _logger.warning('Error cancelling balance watcher', e, s);
+        }),
+      );
+    }
+
+    final pubkeyHintSubs = _pubkeyHintWatchers.values.toList();
+    _pubkeyHintWatchers.clear();
+    for (final subscription in pubkeyHintSubs) {
+      cleanupFutures.add(
+        subscription.cancel().catchError((Object e, StackTrace s) {
+          _logger.warning('Error cancelling pubkey hint watcher', e, s);
         }),
       );
     }
@@ -241,6 +268,8 @@ class BalanceManager implements IBalanceManager {
       throw StateError('PubkeyManager is not initialized');
     }
 
+    final epoch = _stateEpoch;
+
     // Check if user is authenticated
     final user = await _auth.currentUser;
     if (user == null) {
@@ -257,7 +286,9 @@ class BalanceManager implements IBalanceManager {
           .getPubkeys(asset)
           .then((pubkeys) => pubkeys.balance);
       // Update cache with the latest balance
-      _balanceCache[assetId] = balance;
+      if (!_isDisposed && _stateEpoch == epoch) {
+        _balanceCache[assetId] = balance;
+      }
       return balance;
     } catch (e) {
       // Rethrow with more context
@@ -334,6 +365,7 @@ class BalanceManager implements IBalanceManager {
   ) async {
     final controller = _balanceControllers[assetId];
     if (controller == null || _isDisposed) return;
+    final epoch = _stateEpoch;
 
     // Check if dependencies are initialized
     if (_activationCoordinator == null || _pubkeyManager == null) {
@@ -347,6 +379,7 @@ class BalanceManager implements IBalanceManager {
 
     // Cancel any existing watcher for this asset
     await _activeWatchers[assetId]?.cancel();
+    if (!_isCurrentWatcher(assetId, controller, epoch)) return;
     _activeWatchers.remove(assetId);
 
     final asset = _assetLookup.fromId(assetId);
@@ -359,6 +392,7 @@ class BalanceManager implements IBalanceManager {
 
     // Check if user is authenticated
     final user = await _auth.currentUser;
+    if (!_isCurrentWatcher(assetId, controller, epoch)) return;
     if (user == null) {
       // Don't throw an error, just wait for authentication
       _logger.fine(
@@ -375,6 +409,7 @@ class BalanceManager implements IBalanceManager {
     final previouslyEnabledAssets = await _assetHistoryStorage.getWalletAssets(
       user.walletId,
     );
+    if (!_isCurrentWatcher(assetId, controller, epoch)) return;
     final isFirstTimeEnabling = !previouslyEnabledAssets.contains(assetId.id);
 
     // Check metadata to determine if this was an imported wallet
@@ -405,6 +440,7 @@ class BalanceManager implements IBalanceManager {
     try {
       // Ensure asset is activated if needed
       final isActive = await _ensureAssetActivated(asset, activateIfNeeded);
+      if (!_isCurrentWatcher(assetId, controller, epoch)) return;
 
       // If activation was requested but failed, emit error
       if (activateIfNeeded && !isActive) {
@@ -443,14 +479,17 @@ class BalanceManager implements IBalanceManager {
       // Mark asset as seen after successful activation
       if (isActive && isFirstTimeEnabling) {
         await _assetHistoryStorage.addAssetToWallet(user.walletId, assetId.id);
+        if (!_isCurrentWatcher(assetId, controller, epoch)) return;
 
         // Fetch real balance (will update from zero for new wallets)
         final balance = await getBalance(assetId);
-        if (!controller.isClosed) controller.add(balance);
+        if (!_isCurrentWatcher(assetId, controller, epoch)) return;
+        controller.add(balance);
       } else if (isActive) {
         // If active but not first time, still get balance
         final balance = await getBalance(assetId);
-        if (!controller.isClosed) controller.add(balance);
+        if (!_isCurrentWatcher(assetId, controller, epoch)) return;
+        controller.add(balance);
       }
 
       // Subscribe to balance event stream for real-time updates
@@ -473,6 +512,10 @@ class BalanceManager implements IBalanceManager {
       _logger.fine('Subscribing to balance stream for ${assetId.id}');
       final balanceStreamSubscription = await _eventStreamingManager
           .subscribeToBalance(coin: assetId.id);
+      if (!_isCurrentWatcher(assetId, controller, epoch)) {
+        await balanceStreamSubscription.cancel();
+        return;
+      }
 
       var hasFallenBack = false;
       Future<void> fallbackToPolling({
@@ -480,7 +523,8 @@ class BalanceManager implements IBalanceManager {
         Object? error,
         StackTrace? stackTrace,
       }) async {
-        if (hasFallenBack || _isDisposed) return;
+        if (hasFallenBack || !_isCurrentWatcher(assetId, controller, epoch))
+          return;
         hasFallenBack = true;
 
         _logger.info(
@@ -517,7 +561,7 @@ class BalanceManager implements IBalanceManager {
 
       _activeWatchers[assetId] = balanceStreamSubscription
         ..onData((balanceEvent) {
-          if (_isDisposed) return;
+          if (!_isCurrentWatcher(assetId, controller, epoch)) return;
 
           // Verify the event is for the correct coin
           if (balanceEvent.coin != assetId.id) return;
@@ -576,6 +620,7 @@ class BalanceManager implements IBalanceManager {
         activateIfNeeded: activateIfNeeded,
       );
     } catch (e, s) {
+      if (!_isCurrentWatcher(assetId, controller, epoch)) return;
       _logger.warning(
         'Failed to start balance watcher for ${assetId.name}',
         e,
@@ -596,18 +641,20 @@ class BalanceManager implements IBalanceManager {
     required StreamController<BalanceInfo> controller,
     required bool activateIfNeeded,
   }) async {
-    if (_isDisposed || controller.isClosed) return;
+    final epoch = _stateEpoch;
+    if (!_isCurrentWatcher(assetId, controller, epoch)) return;
 
     _logger.fine('Starting balance polling fallback for ${assetId.name}');
 
     Future<BalanceInfo?> fetchLatestBalance() async {
-      if (_isDisposed) return null;
+      if (!_isCurrentWatcher(assetId, controller, epoch)) return null;
 
       if (_activationCoordinator == null || _pubkeyManager == null) {
         return null;
       }
 
       final currentUser = await _auth.currentUser;
+      if (!_isCurrentWatcher(assetId, controller, epoch)) return null;
       if (currentUser == null || currentUser.walletId != _currentWalletId) {
         return null;
       }
@@ -621,9 +668,11 @@ class BalanceManager implements IBalanceManager {
 
       try {
         final isActive = await _ensureAssetActivated(asset, activateIfNeeded);
+        if (!_isCurrentWatcher(assetId, controller, epoch)) return null;
 
         if (isActive) {
           final balance = await getBalance(assetId);
+          if (!_isCurrentWatcher(assetId, controller, epoch)) return null;
           if (enableDebugLogging) {
             _logger.info(
               '[POLLING] Balance fetched for ${assetId.name}: '
@@ -642,14 +691,16 @@ class BalanceManager implements IBalanceManager {
         }
       }
 
-      return lastKnown(assetId);
+      return _isCurrentWatcher(assetId, controller, epoch)
+          ? lastKnown(assetId)
+          : null;
     }
 
     // Kick off an immediate refresh so polling fallback can recover quickly
     // after startup races without waiting for the first periodic tick.
     unawaited(() async {
       final balance = await fetchLatestBalance();
-      if (balance != null && !controller.isClosed) {
+      if (balance != null && _isCurrentWatcher(assetId, controller, epoch)) {
         controller.add(balance);
       }
     }());
@@ -659,12 +710,13 @@ class BalanceManager implements IBalanceManager {
         .asyncMap<BalanceInfo?>((_) => fetchLatestBalance())
         .listen(
           (balance) {
-            if (balance != null && !controller.isClosed) {
+            if (balance != null &&
+                _isCurrentWatcher(assetId, controller, epoch)) {
               controller.add(balance);
             }
           },
           onError: (Object error, StackTrace stackTrace) {
-            if (!controller.isClosed) {
+            if (_isCurrentWatcher(assetId, controller, epoch)) {
               controller.addError(error);
             }
             _logger.warning(
@@ -674,7 +726,9 @@ class BalanceManager implements IBalanceManager {
             );
           },
           onDone: () {
-            _stopWatchingBalance(assetId);
+            if (_isCurrentWatcher(assetId, controller, epoch)) {
+              _stopWatchingBalance(assetId);
+            }
             _logger.fine('Balance polling closed for ${assetId.name}');
           },
           cancelOnError: false,
@@ -703,18 +757,22 @@ class BalanceManager implements IBalanceManager {
     required StreamController<BalanceInfo> controller,
     required bool activateIfNeeded,
   }) {
+    final epoch = _stateEpoch;
+    if (!_isCurrentWatcher(assetId, controller, epoch)) return;
     // Cancel any existing timer first
     _staleBalanceTimers[assetId]?.cancel();
 
     _staleBalanceTimers[assetId] = Timer.periodic(_defaultPollingInterval, (
       _,
     ) async {
-      if (_isDisposed || controller.isClosed) return;
+      if (!_isCurrentWatcher(assetId, controller, epoch)) return;
       try {
         final isActive = await _ensureAssetActivated(asset, activateIfNeeded);
+        if (!_isCurrentWatcher(assetId, controller, epoch)) return;
         if (!isActive) return;
 
         final latest = await getBalance(assetId);
+        if (!_isCurrentWatcher(assetId, controller, epoch)) return;
         final previous = _balanceCache[assetId];
         final changed =
             previous == null ||
@@ -723,9 +781,7 @@ class BalanceManager implements IBalanceManager {
             previous.unspendable != latest.unspendable;
         if (changed) {
           _balanceCache[assetId] = latest;
-          if (!controller.isClosed) {
-            controller.add(latest);
-          }
+          controller.add(latest);
         }
       } catch (_) {
         // best-effort; swallow transient errors
@@ -736,15 +792,17 @@ class BalanceManager implements IBalanceManager {
     unawaited(() async {
       try {
         final isActive = await _ensureAssetActivated(asset, activateIfNeeded);
+        if (!_isCurrentWatcher(assetId, controller, epoch)) return;
         if (!isActive) return;
         final latest = await getBalance(assetId);
+        if (!_isCurrentWatcher(assetId, controller, epoch)) return;
         final previous = _balanceCache[assetId];
         final changed =
             previous == null ||
             previous.total != latest.total ||
             previous.spendable != latest.spendable ||
             previous.unspendable != latest.unspendable;
-        if (changed && !controller.isClosed) {
+        if (changed) {
           _balanceCache[assetId] = latest;
           controller.add(latest);
         }
@@ -764,7 +822,10 @@ class BalanceManager implements IBalanceManager {
     required bool activateIfNeeded,
   }) {
     final pubkeyManager = _pubkeyManager;
-    if (pubkeyManager == null || _isDisposed) return;
+    if (pubkeyManager == null ||
+        _isDisposed ||
+        !identical(_balanceControllers[assetId], controller))
+      return;
 
     _pubkeyHintWatchers[assetId]?.cancel();
     _pubkeyHintWatchers[assetId] = pubkeyManager
@@ -800,7 +861,11 @@ class BalanceManager implements IBalanceManager {
     required StreamController<BalanceInfo> controller,
     required AssetPubkeys pubkeys,
   }) async {
-    if (_isDisposed || _supportsBalanceStreaming(asset)) return;
+    if (_isDisposed ||
+        controller.isClosed ||
+        !identical(_balanceControllers[assetId], controller) ||
+        _supportsBalanceStreaming(asset))
+      return;
 
     final latest = pubkeys.balance;
     final previous = _balanceCache[assetId];
@@ -831,11 +896,13 @@ class BalanceManager implements IBalanceManager {
     required AssetId assetId,
     required StreamController<BalanceInfo> controller,
   }) async {
-    if (_isDisposed) return;
+    final epoch = _stateEpoch;
+    if (!_isCurrentWatcher(assetId, controller, epoch)) return;
     if (!_pendingFastRefresh.contains(assetId)) return;
 
     try {
       final refreshed = await getBalance(assetId);
+      if (!_isCurrentWatcher(assetId, controller, epoch)) return;
       _balanceCache[assetId] = refreshed;
       if (!controller.isClosed) {
         controller.add(refreshed);
@@ -863,6 +930,8 @@ class BalanceManager implements IBalanceManager {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
+    _stateEpoch++;
+    _pendingFastRefresh.clear();
 
     // Take snapshots to avoid concurrent modification while cancelling/closing
     final StreamSubscription<KdfUser?>? authSub = _authSubscription;
@@ -937,6 +1006,7 @@ class BalanceManager implements IBalanceManager {
   @override
   Future<void> precacheBalance(Asset asset) async {
     if (_isDisposed) return;
+    final epoch = _stateEpoch;
 
     // Check if pubkeyManager is initialized
     if (_pubkeyManager == null) {
@@ -945,6 +1015,7 @@ class BalanceManager implements IBalanceManager {
     }
 
     final user = await _auth.currentUser;
+    if (_isDisposed || _stateEpoch != epoch) return;
     if (user == null) return;
 
     // Retry logic to handle timing issues after activation
@@ -956,6 +1027,7 @@ class BalanceManager implements IBalanceManager {
         final balance = await _pubkeyManager!
             .getPubkeys(asset)
             .then((pubkeys) => pubkeys.balance);
+        if (_isDisposed || _stateEpoch != epoch) return;
         _balanceCache[asset.id] = balance;
 
         // If there's an active stream controller for this asset, emit the balance

@@ -50,7 +50,12 @@ Future<void> bootstrap({
     if (kdfFramework != null) return kdfFramework;
 
     final resolvedHostConfig =
-        hostConfig ?? LocalConfig(https: true, rpcPassword: rpcPassword);
+        hostConfig ??
+        LocalConfig(
+          https: true,
+          rpcPassword: rpcPassword,
+          rpcPort: config.localRpcPort,
+        );
 
     return KomodoDefiFramework.create(
       hostConfig: resolvedHostConfig,
@@ -78,7 +83,12 @@ Future<void> bootstrap({
     final auth = KomodoDefiLocalAuth(
       kdf: framework,
       hostConfig:
-          hostConfig ?? LocalConfig(https: true, rpcPassword: rpcPassword),
+          hostConfig ??
+          LocalConfig(
+            https: true,
+            rpcPassword: rpcPassword,
+            rpcPort: config.localRpcPort,
+          ),
     );
     await auth.ensureInitialized();
     return auth;
