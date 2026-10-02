@@ -74,11 +74,13 @@ void main() {
 
         final path = await downloader.getParamsPath();
 
-        // Since we're running on macOS, the path will be treated as macOS
-        // even though it starts with /home/ - the logic checks Platform.isMacOS first
         expect(
           path,
-          equals('/home/testuser/Library/Application Support/ZcashParams'),
+          equals(
+            Platform.isMacOS
+                ? '/home/testuser/Library/Application Support/ZcashParams'
+                : '/home/testuser/.zcash-params',
+          ),
         );
       });
 
@@ -90,10 +92,13 @@ void main() {
 
         final path = await downloader.getParamsPath();
 
-        // Should use the custom home directory (macOS path since we're on macOS)
         expect(
           path,
-          equals('/custom/home/path/Library/Application Support/ZcashParams'),
+          equals(
+            Platform.isMacOS
+                ? '/custom/home/path/Library/Application Support/ZcashParams'
+                : '/custom/home/path/.zcash-params',
+          ),
         );
       });
 
@@ -124,7 +129,7 @@ void main() {
         expect(path, anyOf(isA<String>(), isNull));
       });
 
-      test('uses macOS-specific path when on macOS', () async {
+      test('uses the running platform path with a /Users home', () async {
         const testHome = '/Users/testuser';
         final downloader = UnixZcashParamsDownloader(
           homeDirectoryOverride: testHome,
@@ -132,10 +137,13 @@ void main() {
 
         final path = await downloader.getParamsPath();
 
-        // Should use macOS-specific path (since we're running on macOS and the path starts with /Users/)
         expect(
           path,
-          equals('/Users/testuser/Library/Application Support/ZcashParams'),
+          equals(
+            Platform.isMacOS
+                ? '/Users/testuser/Library/Application Support/ZcashParams'
+                : '/Users/testuser/.zcash-params',
+          ),
         );
       });
     });

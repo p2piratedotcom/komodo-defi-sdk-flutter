@@ -8,6 +8,7 @@ class _FakeKdfOperations implements IKdfOperations {
   _FakeKdfOperations({required this.responsesByMethod});
 
   final Map<String, Map<String, dynamic>> responsesByMethod;
+  bool _running = true;
 
   @override
   String get operationsName => 'fake';
@@ -19,16 +20,20 @@ class _FakeKdfOperations implements IKdfOperations {
   }) async => KdfStartupResult.ok;
 
   @override
-  Future<MainStatus> kdfMainStatus() async => MainStatus.rpcIsUp;
+  Future<MainStatus> kdfMainStatus() async =>
+      _running ? MainStatus.rpcIsUp : MainStatus.notRunning;
 
   @override
-  Future<StopStatus> kdfStop() async => StopStatus.ok;
+  Future<StopStatus> kdfStop() async {
+    _running = false;
+    return StopStatus.ok;
+  }
 
   @override
-  Future<bool> isRunning() async => true;
+  Future<bool> isRunning() async => _running;
 
   @override
-  Future<String?> version() async => 'test-version';
+  Future<String?> version() async => _running ? 'test-version' : null;
 
   @override
   Future<Map<String, dynamic>> mm2Rpc(Map<String, dynamic> request) async {

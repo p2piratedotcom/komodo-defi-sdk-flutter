@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:decimal/decimal.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:komodo_defi_local_auth/komodo_defi_local_auth.dart';
 import 'package:komodo_defi_sdk/src/activation/shared_activation_coordinator.dart';
 import 'package:komodo_defi_sdk/src/assets/asset_lookup.dart';
@@ -9,7 +11,6 @@ import 'package:komodo_defi_sdk/src/pubkeys/pubkey_manager.dart';
 import 'package:komodo_defi_sdk/src/streaming/event_streaming_manager.dart';
 import 'package:komodo_defi_types/komodo_defi_types.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:test/test.dart';
 
 class _MockAuth extends Mock implements KomodoDefiLocalAuth {}
 
@@ -24,6 +25,9 @@ class _MockEventStreamingManager extends Mock
     implements EventStreamingManager {}
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => FlutterSecureStorage.setMockInitialValues(<String, String>{}));
+
   setUpAll(() {
     registerFallbackValue(
       AssetId(
@@ -261,6 +265,72 @@ void main() {
     tearDown(() async {
       await manager.dispose();
       await authChanges.close();
+    });
+
+    test('wallet change discards an in-flight balance fetch', () async {
+      final assetId = AssetId(
+        id: 'ATOM',
+        name: 'Cosmos',
+        symbol: AssetSymbol(assetConfigId: 'ATOM'),
+        chainId: AssetChainId(chainId: 118, decimalsValue: 6),
+        derivationPath: null,
+        subClass: CoinSubClass.tendermint,
+      );
+      final asset = Asset(
+        id: assetId,
+        protocol: TendermintProtocol.fromJson({
+          'type': 'Tendermint',
+          'rpc_urls': [
+            {'url': 'http://localhost:26657'},
+          ],
+        }),
+        isWalletOnly: false,
+        signMessagePrefix: null,
+      );
+      when(() => assetLookup.fromId(assetId)).thenReturn(asset);
+
+      final requested = Completer<void>();
+      final response = Completer<AssetPubkeys>();
+      when(() => pubkeyManager.getPubkeys(asset)).thenAnswer((_) {
+        requested.complete();
+        return response.future;
+      });
+
+      final pending = manager.getBalance(assetId);
+      await requested.future;
+      authChanges.add(
+        const KdfUser(
+          walletId: WalletId(
+            name: 'next-wallet',
+            authOptions: AuthOptions(derivationMethod: DerivationMethod.iguana),
+          ),
+          isBip39Seed: false,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      response.complete(
+        AssetPubkeys(
+          assetId: assetId,
+          keys: [
+            PubkeyInfo(
+              address: 'cosmos1old',
+              derivationPath: null,
+              chain: null,
+              balance: BalanceInfo(
+                total: Decimal.one,
+                spendable: Decimal.one,
+                unspendable: Decimal.zero,
+              ),
+              coinTicker: assetId.id,
+            ),
+          ],
+          availableAddressesCount: 1,
+          syncStatus: SyncStatusEnum.success,
+        ),
+      );
+      await pending;
+      expect(manager.lastKnown(assetId), isNull);
     });
 
     test('concurrent controller closure on auth state change', () async {

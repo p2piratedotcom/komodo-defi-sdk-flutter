@@ -49,6 +49,8 @@ Map<String, dynamic> _erc20Config() => {
   'mm2': 1,
   'chain_id': 1,
   'required_confirmations': 3,
+  'swap_contract_address': '0x0000000000000000000000000000000000000001',
+  'fallback_swap_contract': '0x0000000000000000000000000000000000000002',
   'protocol': {
     'type': 'ETH',
     'protocol_data': {'chain_id': 1},

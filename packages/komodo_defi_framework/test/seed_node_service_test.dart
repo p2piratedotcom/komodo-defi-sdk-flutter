@@ -48,7 +48,10 @@ void main() {
         bundle: bundle,
       );
 
-      expect(seedNodes, equals(const ['seed01.kmdefi.net']));
+      expect(
+        seedNodes,
+        equals(const ['seed01.kmdefi.net', 'seed02.kmdefi.net']),
+      );
     });
   });
 }

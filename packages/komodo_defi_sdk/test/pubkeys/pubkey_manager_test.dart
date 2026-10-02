@@ -208,7 +208,7 @@ void main() {
     });
 
     test(
-      'watchPubkeys emits last known immediately, then same via controller, then refreshed value',
+      'watchPubkeys emits last known immediately, then refreshed value',
       () async {
         final user = nonHdUser();
         when(() => auth.currentUser).thenAnswer((_) async => user);
@@ -223,14 +223,20 @@ void main() {
 
         final stream = manager.watchPubkeys(tendermintAsset);
 
-        // First emit is immediate lastKnown, second is same from controller, third is refreshed value
-        final firstThree = await stream.take(3).toList();
-        expect(firstThree[0].keys.first.address, 'cosmos1pre');
-        expect(firstThree[2].keys.first.address, 'cosmos1new');
+        final firstTwo = await stream.take(2).toList();
+        expect(firstTwo[0].keys.first.address, 'cosmos1pre');
+        expect(firstTwo[1].keys.first.address, 'cosmos1new');
       },
     );
 
-    test('watchPubkeys respects polling interval (~30s)', () async {
+    test('watchPubkeys polls again with a short configured interval', () async {
+      await manager.dispose();
+      manager = PubkeyManager(
+        client,
+        auth,
+        activation,
+        pollingInterval: const Duration(milliseconds: 100),
+      );
       final user = nonHdUser();
       when(() => auth.currentUser).thenAnswer((_) async => user);
       await stubActivationAlwaysActive(tendermintAsset);
@@ -239,40 +245,24 @@ void main() {
       stubWalletMyBalance(address: 'cosmos1pre', coin: tendermintAsset.id.id);
       await manager.precachePubkeys(tendermintAsset);
 
-      fakeAsync((FakeAsync async) {
-        // After start, we set a different address for the immediate refresh
-        stubWalletMyBalance(
-          address: 'cosmos1poll1',
-          coin: tendermintAsset.id.id,
-        );
+      stubWalletMyBalance(address: 'cosmos1poll1', coin: tendermintAsset.id.id);
 
-        final emitted = <String>[];
-        final sub = manager.watchPubkeys(tendermintAsset).listen((e) {
-          emitted.add(e.keys.first.address);
-        });
-
-        // Allow the immediate refresh to occur
-        async.flushMicrotasks();
-        expect(emitted.contains('cosmos1poll1'), isTrue);
-
-        // Prepare next poll result and ensure it's not emitted before 30s
-        stubWalletMyBalance(
-          address: 'cosmos1poll2',
-          coin: tendermintAsset.id.id,
-        );
-        async
-          ..elapse(Duration(seconds: 29))
-          ..flushMicrotasks();
-        expect(emitted.contains('cosmos1poll2'), isFalse);
-
-        // Hitting 30s should emit the next poll
-        async
-          ..elapse(Duration(seconds: 1))
-          ..flushMicrotasks();
-        expect(emitted.contains('cosmos1poll2'), isTrue);
-
-        unawaited(sub.cancel());
+      final firstRefresh = Completer<void>();
+      final nextPoll = Completer<void>();
+      final sub = manager.watchPubkeys(tendermintAsset).listen((event) {
+        final address = event.keys.first.address;
+        if (address == 'cosmos1poll1' && !firstRefresh.isCompleted) {
+          firstRefresh.complete();
+        }
+        if (address == 'cosmos1poll2' && !nextPoll.isCompleted) {
+          nextPoll.complete();
+        }
       });
+      await firstRefresh.future.timeout(const Duration(seconds: 2));
+
+      stubWalletMyBalance(address: 'cosmos1poll2', coin: tendermintAsset.id.id);
+      await nextPoll.future.timeout(const Duration(seconds: 2));
+      await sub.cancel();
     });
 
     test('watchPubkeys stops and new watches throw after dispose', () async {

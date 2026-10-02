@@ -41,12 +41,16 @@ abstract class IPubkeyManager {
 
 /// Manager responsible for handling pubkey operations across different assets
 class PubkeyManager implements IPubkeyManager {
+  /// Creates a pubkey manager; a shorter interval can be used in tests.
   PubkeyManager(
     this._client,
     this._auth,
     this._activationCoordinator, {
     PubkeysStorage? storage,
-  }) : _storage = storage ?? HivePubkeysStorage() {
+    Duration pollingInterval = const Duration(seconds: 30),
+  }) : assert(pollingInterval > Duration.zero, 'Polling interval must be positive'),
+       _storage = storage ?? HivePubkeysStorage(),
+       _pollingInterval = pollingInterval {
     _authSubscription = _auth.authStateChanges.listen(_handleAuthStateChanged);
     _logger.fine('Initialized');
   }
@@ -72,7 +76,7 @@ class PubkeyManager implements IPubkeyManager {
   StreamSubscription<KdfUser?>? _authSubscription;
   WalletId? _currentWalletId;
   bool _isDisposed = false;
-  final Duration _defaultPollingInterval = const Duration(seconds: 30);
+  final Duration _pollingInterval;
 
   /// Get pubkeys for a given asset, handling HD/non-HD differences internally
   @override
@@ -347,7 +351,7 @@ class PubkeyManager implements IPubkeyManager {
       }
 
       // Periodic polling for pubkeys updates
-      final periodicStream = Stream<void>.periodic(_defaultPollingInterval);
+      final periodicStream = Stream<void>.periodic(_pollingInterval);
       _activeWatchers[asset.id] = periodicStream
           .asyncMap<AssetPubkeys?>((_) async {
             if (_isDisposed) return null;

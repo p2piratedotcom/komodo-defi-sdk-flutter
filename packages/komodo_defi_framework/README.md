@@ -55,6 +55,10 @@ final version = await framework.version();
 await framework.kdfStop();
 ```
 
+For an isolated local process, pass the same nondefault `rpcPort` to both
+`LocalConfig` and `KdfStartupConfig.noAuthStartup`. The framework rejects a
+port mismatch before starting KDF. The default remains 7783.
+
 ## Direct RPC access
 
 The framework exposes `ApiClient` with typed RPC namespaces:

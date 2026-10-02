@@ -11,8 +11,9 @@ class KomodoDefiSdkConfig {
     this.activationRetryDelay = const Duration(seconds: 2),
     this.activatedAssetsCacheTtl = const Duration(seconds: 10),
     this.marketDataConfig = const MarketDataConfig(),
+    this.localRpcPort = 7783,
     this.tronProApiKey,
-  });
+  }) : assert(localRpcPort > 0 && localRpcPort <= 65535, 'Invalid local RPC port');
 
   /// Set of asset IDs that should be enabled by default
   final Set<String> defaultAssets;
@@ -39,6 +40,9 @@ class KomodoDefiSdkConfig {
   /// Configuration for market data repositories
   final MarketDataConfig marketDataConfig;
 
+  /// Loopback RPC port for a local KDF instance. Defaults to the KDF port.
+  final int localRpcPort;
+
   /// No longer used. Transaction history now uses TRONGrid which requires no
   /// API key. Retained for backward compatibility.
   final String? tronProApiKey;
@@ -52,6 +56,7 @@ class KomodoDefiSdkConfig {
     Duration? activationRetryDelay,
     Duration? activatedAssetsCacheTtl,
     MarketDataConfig? marketDataConfig,
+    int? localRpcPort,
     String? tronProApiKey,
   }) {
     return KomodoDefiSdkConfig(
@@ -68,6 +73,7 @@ class KomodoDefiSdkConfig {
       activatedAssetsCacheTtl:
           activatedAssetsCacheTtl ?? this.activatedAssetsCacheTtl,
       marketDataConfig: marketDataConfig ?? this.marketDataConfig,
+      localRpcPort: localRpcPort ?? this.localRpcPort,
       tronProApiKey: tronProApiKey ?? this.tronProApiKey,
     );
   }

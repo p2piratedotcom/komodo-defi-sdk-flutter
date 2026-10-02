@@ -187,6 +187,7 @@ extension KdfExtensions on KdfAuthService {
       walletPassword: walletPassword,
       seed: plaintextMnemonic ?? encryptedMnemonic,
       rpcPassword: _hostConfig.rpcPassword,
+      rpcPort: _hostConfig is LocalConfig ? _hostConfig.rpcPort : 7783,
       allowRegistrations: allowRegistrations,
       enableHd: hdEnabled,
       allowWeakPassword: allowWeakPassword,

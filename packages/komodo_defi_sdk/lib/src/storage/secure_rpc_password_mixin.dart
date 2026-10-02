@@ -15,6 +15,7 @@ mixin class SecureRpcPasswordMixin {
 
   /// Secure storage instance.
   FlutterSecureStorage? _secureStorage;
+  bool _storageInitialized = false;
 
   // TODO: See if a lighterweight alternative to shared preferences can be used.
   /// Shared preferences for fallback.
@@ -22,6 +23,7 @@ mixin class SecureRpcPasswordMixin {
 
   /// Initializes the storage, attempting to use secure storage.
   Future<void> _initializeStorage() async {
+    if (_storageInitialized) return;
     try {
       // Try to initialize secure storage
       _secureStorage = FlutterSecureStorage(
@@ -36,6 +38,8 @@ mixin class SecureRpcPasswordMixin {
       // Test secure storage by reading a key (may throw exception if not supported)
       await _secureStorage!.read(key: _rpcPasswordKey);
     } catch (e) {
+      // A failed read means secure storage is unusable in this session.
+      _secureStorage = null;
       // If secure storage fails, fallback to shared preferences in non-release mode
       if (!kReleaseMode) {
         _sharedPreferences = await SharedPreferences.getInstance();
@@ -43,6 +47,7 @@ mixin class SecureRpcPasswordMixin {
         rethrow; // Re-throw the error in release mode
       }
     }
+    _storageInitialized = true;
   }
 
   /// Retrieves the stored RPC password from secure storage or shared
@@ -102,7 +107,6 @@ mixin class SecureRpcPasswordMixin {
   String _generateSecurePassword() => SecurityUtils.generatePasswordSecure(32);
 
   /// Android-specific options for secure storage.
-  AndroidOptions _getAndroidOptions() => const AndroidOptions(
-        encryptedSharedPreferences: true,
-      );
+  AndroidOptions _getAndroidOptions() =>
+      const AndroidOptions(encryptedSharedPreferences: true);
 }
