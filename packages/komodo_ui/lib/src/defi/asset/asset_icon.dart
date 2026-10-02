@@ -4,8 +4,8 @@ import 'package:komodo_defi_types/komodo_defi_types.dart';
 
 /// A widget that displays an icon for a given [AssetId].
 ///
-/// The icon is first looked up in the local assets, then falls back to a CDN,
-/// and finally displays a generic icon if neither source has the icon.
+/// The icon is first looked up in local assets, then a ticker badge is rendered
+/// locally when the artwork is not bundled.
 class AssetIcon extends StatelessWidget {
   /// Creates an [AssetIcon] widget that displays an icon for the given [AssetId].
   /// This is the preferred constructor as it provides type safety and additional
@@ -72,7 +72,7 @@ class AssetIcon extends StatelessWidget {
 
   /// Registers a custom icon for a given coin abbreviation.
   ///
-  /// The [imageProvider] will be used instead of the default asset or CDN images
+  /// The [imageProvider] will be used instead of the default asset image
   /// when displaying the icon for the specified [assetId].
   ///
   /// Example:
@@ -111,7 +111,7 @@ class AssetIcon extends StatelessWidget {
     );
   }
 
-  /// Checks if the asset icon exists in the local assets or CDN **based solely
+  /// Checks if the asset icon exists in the local assets **based solely
   /// on the internal cache**.
   ///
   /// This method does **not** perform a live check. It only returns `true` if
@@ -155,15 +155,10 @@ class _AssetIconResolver extends StatelessWidget {
 
   static const _coinImagesFolder =
       'packages/komodo_defi_framework/assets/coin_icons/png/';
-  static const _mediaCdnUrl = 'https://gleecbtc.github.io/coins/icons/';
-
   static final Map<String, bool> _assetExistenceCache = {};
-  static final Map<String, bool> _cdnExistenceCache = {};
   static final Map<String, ImageProvider> _customIconsCache = {};
-  static final Map<String, DateTime> _lastCdnFailureAt = {};
   static Set<String>? _bundledAssetPaths;
   static Future<Set<String>>? _bundledAssetPathsLoader;
-  static const _cdnRetryInterval = Duration(minutes: 1);
 
   static void registerCustomIcon(AssetId assetId, ImageProvider imageProvider) {
     final sanitizedId = assetId.symbol.configSymbol.toLowerCase();
@@ -172,9 +167,7 @@ class _AssetIconResolver extends StatelessWidget {
 
   static void clearCaches() {
     _assetExistenceCache.clear();
-    _cdnExistenceCache.clear();
     _customIconsCache.clear();
-    _lastCdnFailureAt.clear();
     _bundledAssetPaths = null;
     _bundledAssetPathsLoader = null;
   }
@@ -182,7 +175,6 @@ class _AssetIconResolver extends StatelessWidget {
   String get _sanitizedId =>
       AssetSymbol.symbolFromConfigId(assetId).toLowerCase();
   String get _imagePath => '$_coinImagesFolder$_sanitizedId.png';
-  String get _cdnUrl => '$_mediaCdnUrl$_sanitizedId.png';
 
   static Future<Set<String>> _loadBundledAssetPaths() async {
     if (_bundledAssetPaths != null) {
@@ -225,22 +217,6 @@ class _AssetIconResolver extends StatelessWidget {
     return outcome.succeeded;
   }
 
-  static Future<bool> _precacheCdnImage(
-    BuildContext context,
-    NetworkImage cdnImage,
-    String sanitizedId,
-  ) async {
-    if (!context.mounted) return false;
-    final cdnSucceeded = await _didImagePrecacheSucceed(cdnImage, context);
-    _cdnExistenceCache[sanitizedId] = cdnSucceeded;
-    if (cdnSucceeded) {
-      _lastCdnFailureAt.remove(sanitizedId);
-    } else {
-      _lastCdnFailureAt[sanitizedId] = DateTime.now();
-    }
-    return cdnSucceeded;
-  }
-
   static Future<void> precacheAssetIcon(
     BuildContext context,
     AssetId asset, {
@@ -264,7 +240,6 @@ class _AssetIconResolver extends StatelessWidget {
       }
 
       final assetImage = AssetImage(resolver._imagePath);
-      final cdnImage = NetworkImage(resolver._cdnUrl);
       final bundledAssetExists = await _isBundledAssetDeclared(
         resolver._imagePath,
       );
@@ -277,36 +252,12 @@ class _AssetIconResolver extends StatelessWidget {
         );
         _assetExistenceCache[resolver._imagePath] = assetSucceeded;
         if (assetSucceeded) {
-          _cdnExistenceCache.remove(sanitizedId);
-          _lastCdnFailureAt.remove(sanitizedId);
           return;
-        }
-
-        _assetExistenceCache[resolver._imagePath] = false;
-        if (!context.mounted) return;
-        final cdnSucceeded = await _precacheCdnImage(
-          context,
-          cdnImage,
-          sanitizedId,
-        );
-        if (throwExceptions && !cdnSucceeded) {
-          throw Exception(
-            'Failed to pre-cache bundled and CDN images for asset ${asset.id}',
-          );
         }
         return;
       }
 
       _assetExistenceCache[resolver._imagePath] = false;
-      if (!context.mounted) return;
-      final cdnSucceeded = await _precacheCdnImage(
-        context,
-        cdnImage,
-        sanitizedId,
-      );
-      if (throwExceptions && !cdnSucceeded) {
-        throw Exception('Failed to pre-cache CDN image for asset ${asset.id}');
-      }
     } catch (e) {
       debugPrint('Error in precacheAssetIcon for ${asset.id}: $e');
       if (throwExceptions) rethrow;
@@ -318,26 +269,31 @@ class _AssetIconResolver extends StatelessWidget {
     return _assetExistenceCache[resolver._imagePath] ?? false;
   }
 
-  Widget _buildFallbackIcon() {
-    return Icon(Icons.monetization_on_outlined, size: size);
-  }
-
-  Widget _buildCdnImage() {
-    return Image.network(
-      _cdnUrl,
-      filterQuality: FilterQuality.high,
-      errorBuilder: (context, error, stackTrace) {
-        _cdnExistenceCache[_sanitizedId] = false;
-        _lastCdnFailureAt[_sanitizedId] = DateTime.now();
-        return _buildFallbackIcon();
-      },
+  Widget _buildFallbackIcon(BuildContext context) {
+    final ticker = _sanitizedId.toUpperCase();
+    final label = ticker.length > 3 ? ticker.substring(0, 3) : ticker;
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      label: '$ticker coin icon',
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: colors.primary.withValues(alpha: 0.18),
+          shape: BoxShape.circle,
+        ),
+        child: Text(
+          label,
+          maxLines: 1,
+          style: TextStyle(
+            color: colors.primary,
+            fontSize: size * 0.3,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
     );
-  }
-
-  bool _shouldRetryCdnNow() {
-    final lastFailure = _lastCdnFailureAt[_sanitizedId];
-    if (lastFailure == null) return true;
-    return DateTime.now().difference(lastFailure) >= _cdnRetryInterval;
   }
 
   @override
@@ -348,24 +304,14 @@ class _AssetIconResolver extends StatelessWidget {
         filterQuality: FilterQuality.high,
         errorBuilder: (context, error, stackTrace) {
           debugPrint('Error loading custom icon for $assetId: $error');
-          return Icon(Icons.monetization_on_outlined, size: size);
+          return _buildFallbackIcon(context);
         },
       );
     }
 
     final bundledState = _assetExistenceCache[_imagePath];
-    final cdnState = _cdnExistenceCache[_sanitizedId];
-
-    if (bundledState == false && cdnState == true) {
-      return _buildCdnImage();
-    }
-
-    if (bundledState == false && cdnState == false) {
-      if (_shouldRetryCdnNow()) {
-        _cdnExistenceCache[_sanitizedId] = true;
-        return _buildCdnImage();
-      }
-      return _buildFallbackIcon();
+    if (bundledState == false) {
+      return _buildFallbackIcon(context);
     }
 
     _assetExistenceCache[_imagePath] = bundledState ?? true;
@@ -374,13 +320,7 @@ class _AssetIconResolver extends StatelessWidget {
       filterQuality: FilterQuality.high,
       errorBuilder: (context, error, stackTrace) {
         _assetExistenceCache[_imagePath] = false;
-        if (_cdnExistenceCache[_sanitizedId] == false) {
-          return _buildFallbackIcon();
-        }
-
-        _cdnExistenceCache[_sanitizedId] ??= true;
-
-        return _buildCdnImage();
+        return _buildFallbackIcon(context);
       },
     );
   }
