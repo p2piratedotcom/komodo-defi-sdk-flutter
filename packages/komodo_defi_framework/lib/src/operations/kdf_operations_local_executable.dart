@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:komodo_defi_framework/src/config/kdf_config.dart';
 import 'package:komodo_defi_framework/src/config/kdf_tor_config.dart';
@@ -120,6 +122,7 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
         }
         environment['LD_PRELOAD'] = libraryPath;
         environment['TORSOCKS_CONF_FILE'] = configPath;
+        await _verifyTorPreload(executablePath, libraryPath, environment);
         _logCallback(
           'Starting KDF NetID ${params['netid']} via Tor SOCKS on '
           '127.0.0.1:${KdfTorConfig.socksPort}',
@@ -348,5 +351,89 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
         _process = null;
       }
     }
+  }
+}
+
+/// Ask the interpreter embedded in this exact KDF ELF to resolve its
+/// libraries without executing KDF. A probe against another executable could
+/// pass even when KDF is static or uses an incompatible loader.
+Future<void> _verifyTorPreload(
+  String executablePath,
+  String libraryPath,
+  Map<String, String> environment,
+) async {
+  final executable = File(executablePath);
+  if ((await executable.stat()).mode & 0xC00 != 0) {
+    throw StateError('Privileged KDF executables cannot be used with Tor');
+  }
+  final interpreter = await _readElfInterpreter(executable);
+  final probe = await Process.run(interpreter, [
+    '--list',
+    executablePath,
+  ], environment: environment).timeout(const Duration(seconds: 10));
+  final configured = File(libraryPath).absolute.path;
+  final resolved = File(libraryPath).resolveSymbolicLinksSync();
+  final output = probe.stdout.toString();
+  if (probe.exitCode != 0 ||
+      !output
+          .split('\n')
+          .any(
+            (line) =>
+                line.trimLeft().startsWith('$configured ') ||
+                line.trimLeft().startsWith('$resolved '),
+          )) {
+    throw StateError('KDF loader did not load the Tor transport library');
+  }
+}
+
+Future<String> _readElfInterpreter(File executable) async {
+  final file = await executable.open();
+  try {
+    final size = await file.length();
+    final headerBytes = await file.read(64);
+    if (headerBytes.length != 64 ||
+        headerBytes[0] != 0x7f ||
+        headerBytes[1] != 0x45 ||
+        headerBytes[2] != 0x4c ||
+        headerBytes[3] != 0x46 ||
+        headerBytes[4] != 2 ||
+        headerBytes[5] != 1) {
+      throw StateError('Tor requires a dynamic Linux x86-64 KDF executable');
+    }
+    final header = ByteData.sublistView(Uint8List.fromList(headerBytes));
+    if (header.getUint16(18, Endian.little) != 62) {
+      throw StateError('Tor requires a Linux x86-64 KDF executable');
+    }
+    final offset = header.getUint64(32, Endian.little);
+    final entrySize = header.getUint16(54, Endian.little);
+    final count = header.getUint16(56, Endian.little);
+    if (entrySize < 56 ||
+        count == 0 ||
+        count > 256 ||
+        offset + entrySize * count > size) {
+      throw StateError('Invalid KDF ELF program headers');
+    }
+    for (var i = 0; i < count; i++) {
+      await file.setPosition(offset + i * entrySize);
+      final bytes = await file.read(56);
+      if (bytes.length != 56) break;
+      final entry = ByteData.sublistView(Uint8List.fromList(bytes));
+      if (entry.getUint32(0, Endian.little) != 3) continue; // PT_INTERP
+      final pathOffset = entry.getUint64(8, Endian.little);
+      final pathSize = entry.getUint64(32, Endian.little);
+      if (pathSize < 2 || pathSize > 4096 || pathOffset + pathSize > size) {
+        break;
+      }
+      await file.setPosition(pathOffset);
+      final pathBytes = await file.read(pathSize);
+      final terminator = pathBytes.indexOf(0);
+      if (terminator < 1) break;
+      final interpreter = utf8.decode(pathBytes.sublist(0, terminator));
+      if (interpreter.startsWith('/')) return interpreter;
+      break;
+    }
+    throw StateError('KDF has no usable dynamic ELF interpreter');
+  } finally {
+    await file.close();
   }
 }

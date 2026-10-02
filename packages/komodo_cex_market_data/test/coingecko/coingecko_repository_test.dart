@@ -6,6 +6,23 @@ import 'package:test/test.dart';
 
 class MockICoinGeckoProvider extends Mock implements ICoinGeckoProvider {}
 
+void stubCurrentPrice(MockICoinGeckoProvider provider) {
+  when(
+    () => provider.fetchCoinPrices(
+      any(),
+      vsCurrencies: any(named: 'vsCurrencies'),
+    ),
+  ).thenAnswer(
+    (_) async => {
+      'bitcoin': AssetMarketInformation(
+        ticker: 'bitcoin',
+        lastPrice: Decimal.fromInt(50000),
+        change24h: Decimal.fromInt(2),
+      ),
+    },
+  );
+}
+
 void main() {
   group('CoinGeckoRepository', () {
     late CoinGeckoRepository repository;
@@ -414,41 +431,38 @@ void main() {
     });
 
     group('getCoinList failure cooldown', () {
-      test(
-        'should not retry API call during cooldown after failure',
-        () async {
-          var callCount = 0;
-          when(() => mockProvider.fetchCoinList()).thenAnswer((_) async {
-            callCount++;
-            throw Exception('API error');
-          });
-          when(
-            () => mockProvider.fetchSupportedVsCurrencies(),
-          ).thenAnswer((_) async => ['usd']);
+      test('should not retry API call during cooldown after failure', () async {
+        var callCount = 0;
+        when(() => mockProvider.fetchCoinList()).thenAnswer((_) async {
+          callCount++;
+          throw Exception('API error');
+        });
+        when(
+          () => mockProvider.fetchSupportedVsCurrencies(),
+        ).thenAnswer((_) async => ['usd']);
 
-          // Enable memoization for this test
-          final memoizedRepo = CoinGeckoRepository(
-            coinGeckoProvider: mockProvider,
-          );
+        // Enable memoization for this test
+        final memoizedRepo = CoinGeckoRepository(
+          coinGeckoProvider: mockProvider,
+        );
 
-          // First call should hit the API and fail
-          expect(memoizedRepo.getCoinList(), throwsA(isA<Exception>()));
-          await Future<void>.delayed(Duration.zero);
-          expect(callCount, equals(1));
+        // First call should hit the API and fail
+        expect(memoizedRepo.getCoinList(), throwsA(isA<Exception>()));
+        await Future<void>.delayed(Duration.zero);
+        expect(callCount, equals(1));
 
-          // Second call should throw StateError (cooldown) without hitting API
-          expect(memoizedRepo.getCoinList(), throwsA(isA<StateError>()));
-          await Future<void>.delayed(Duration.zero);
-          expect(callCount, equals(1)); // Still 1 - no new API call
-        },
-      );
+        // Second call should throw StateError (cooldown) without hitting API
+        expect(memoizedRepo.getCoinList(), throwsA(isA<StateError>()));
+        await Future<void>.delayed(Duration.zero);
+        expect(callCount, equals(1)); // Still 1 - no new API call
+      });
 
       test(
         'should return false from supports() during cooldown without API call',
         () async {
-          when(() => mockProvider.fetchCoinList()).thenThrow(
-            Exception('rate limit'),
-          );
+          when(
+            () => mockProvider.fetchCoinList(),
+          ).thenThrow(Exception('rate limit'));
           when(
             () => mockProvider.fetchSupportedVsCurrencies(),
           ).thenAnswer((_) async => ['usd']);
@@ -595,49 +609,17 @@ void main() {
             subClass: CoinSubClass.utxo,
           );
 
-          // Mock the market data response
-          when(
-            () => mockProvider.fetchCoinMarketData(
-              ids: any(named: 'ids'),
-              vsCurrency: any(named: 'vsCurrency'),
-            ),
-          ).thenAnswer(
-            (_) async => [
-              CoinMarketData(
-                id: 'bitcoin',
-                symbol: 'btc',
-                name: 'Bitcoin',
-                currentPrice: Decimal.fromInt(50000),
-                marketCap: Decimal.fromInt(1000000000),
-                marketCapRank: Decimal.fromInt(1),
-                fullyDilutedValuation: Decimal.fromInt(1050000000),
-                totalVolume: Decimal.fromInt(25000000),
-                high24h: Decimal.fromInt(52000),
-                low24h: Decimal.fromInt(48000),
-                priceChange24h: Decimal.fromInt(1000),
-                priceChangePercentage24h: Decimal.fromInt(2),
-                marketCapChange24h: Decimal.fromInt(50000000),
-                marketCapChangePercentage24h: Decimal.fromInt(5),
-                circulatingSupply: Decimal.fromInt(19000000),
-                totalSupply: Decimal.fromInt(21000000),
-                maxSupply: Decimal.fromInt(21000000),
-                ath: Decimal.fromInt(69000),
-                athChangePercentage: Decimal.parse('-27.5'),
-                athDate: DateTime.parse('2021-11-10T14:24:11.849Z'),
-                atl: Decimal.parse('67.81'),
-                atlChangePercentage: Decimal.parse('73662.1'),
-                atlDate: DateTime.parse('2013-07-06T00:00:00.000Z'),
-                lastUpdated: DateTime.now(),
-              ),
-            ],
-          );
+          stubCurrentPrice(mockProvider);
 
           // Call method with USDT - should use USD as vs_currency, not USDT
           await repository.getCoin24hrPriceChange(assetId);
 
           // Verify that USD was used, not USDT
           verify(
-            () => mockProvider.fetchCoinMarketData(ids: ['bitcoin']),
+            () => mockProvider.fetchCoinPrices(
+              ['bitcoin'],
+              vsCurrencies: ['usd'],
+            ),
           ).called(1);
         },
       );
@@ -667,49 +649,17 @@ void main() {
             subClass: CoinSubClass.utxo,
           );
 
-          // Mock the market data response
-          when(
-            () => mockProvider.fetchCoinMarketData(
-              ids: any(named: 'ids'),
-              vsCurrency: any(named: 'vsCurrency'),
-            ),
-          ).thenAnswer(
-            (_) async => [
-              CoinMarketData(
-                id: 'bitcoin',
-                symbol: 'btc',
-                name: 'Bitcoin',
-                currentPrice: Decimal.fromInt(50000),
-                marketCap: Decimal.fromInt(1000000000),
-                marketCapRank: Decimal.fromInt(1),
-                fullyDilutedValuation: Decimal.fromInt(1050000000),
-                totalVolume: Decimal.fromInt(25000000),
-                high24h: Decimal.fromInt(52000),
-                low24h: Decimal.fromInt(48000),
-                priceChange24h: Decimal.fromInt(1000),
-                priceChangePercentage24h: Decimal.fromInt(2),
-                marketCapChange24h: Decimal.fromInt(50000000),
-                marketCapChangePercentage24h: Decimal.fromInt(5),
-                circulatingSupply: Decimal.fromInt(19000000),
-                totalSupply: Decimal.fromInt(21000000),
-                maxSupply: Decimal.fromInt(21000000),
-                ath: Decimal.fromInt(69000),
-                athChangePercentage: Decimal.parse('-27.5'),
-                athDate: DateTime.parse('2021-11-10T14:24:11.849Z'),
-                atl: Decimal.parse('67.81'),
-                atlChangePercentage: Decimal.parse('73662.1'),
-                atlDate: DateTime.parse('2013-07-06T00:00:00.000Z'),
-                lastUpdated: DateTime.now(),
-              ),
-            ],
-          );
+          stubCurrentPrice(mockProvider);
 
           // Call method with USDT - should fall back to USD (final fallback), not USDT
           await repository.getCoin24hrPriceChange(assetId);
 
           // Verify that USD was used as final fallback, not USDT
           verify(
-            () => mockProvider.fetchCoinMarketData(ids: ['bitcoin']),
+            () => mockProvider.fetchCoinPrices(
+              ['bitcoin'],
+              vsCurrencies: ['usd'],
+            ),
           ).called(1);
         },
       );
@@ -739,42 +689,7 @@ void main() {
             subClass: CoinSubClass.utxo,
           );
 
-          // Mock the market data response
-          when(
-            () => mockProvider.fetchCoinMarketData(
-              ids: any(named: 'ids'),
-              vsCurrency: any(named: 'vsCurrency'),
-            ),
-          ).thenAnswer(
-            (_) async => [
-              CoinMarketData(
-                id: 'bitcoin',
-                symbol: 'btc',
-                name: 'Bitcoin',
-                currentPrice: Decimal.fromInt(50000),
-                marketCap: Decimal.fromInt(1000000000),
-                marketCapRank: Decimal.fromInt(1),
-                fullyDilutedValuation: Decimal.fromInt(1050000000),
-                totalVolume: Decimal.fromInt(25000000),
-                high24h: Decimal.fromInt(52000),
-                low24h: Decimal.fromInt(48000),
-                priceChange24h: Decimal.fromInt(1000),
-                priceChangePercentage24h: Decimal.fromInt(2),
-                marketCapChange24h: Decimal.fromInt(50000000),
-                marketCapChangePercentage24h: Decimal.fromInt(5),
-                circulatingSupply: Decimal.fromInt(19000000),
-                totalSupply: Decimal.fromInt(21000000),
-                maxSupply: Decimal.fromInt(21000000),
-                ath: Decimal.fromInt(69000),
-                athChangePercentage: Decimal.parse('-27.5'),
-                athDate: DateTime.parse('2021-11-10T14:24:11.849Z'),
-                atl: Decimal.parse('67.81'),
-                atlChangePercentage: Decimal.parse('73662.1'),
-                atlDate: DateTime.parse('2013-07-06T00:00:00.000Z'),
-                lastUpdated: DateTime.now(),
-              ),
-            ],
-          );
+          stubCurrentPrice(mockProvider);
 
           // Call method with EUR fiat currency
           await repository.getCoin24hrPriceChange(
@@ -784,9 +699,9 @@ void main() {
 
           // Verify that EUR was used correctly
           verify(
-            () => mockProvider.fetchCoinMarketData(
-              ids: ['bitcoin'],
-              vsCurrency: 'eur',
+            () => mockProvider.fetchCoinPrices(
+              ['bitcoin'],
+              vsCurrencies: ['eur'],
             ),
           ).called(1);
         },

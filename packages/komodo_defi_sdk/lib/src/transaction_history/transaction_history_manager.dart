@@ -205,10 +205,11 @@ class TransactionHistoryManager implements _TransactionHistoryManager {
         limit: pagination.limit ?? _maxBatchSize,
       );
 
-      // If we have enough local data and it's not a first page request, return it
+      // A partial local cache cannot establish the complete page count. Page
+      // requests must consult KDF, especially when checking that a recovery
+      // transaction is absent from the entire history.
       if (localPage.transactions.isNotEmpty &&
-          (pagination is PagePagination && pagination.pageNumber > 1 ||
-              pagination is TransactionBasedPagination)) {
+          pagination is TransactionBasedPagination) {
         return localPage;
       }
 

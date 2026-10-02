@@ -63,6 +63,7 @@ class CoinGeckoRepository implements CexRepository {
 
   Future<void> _flushPrices() async {
     _batchTimer = null;
+    final deadline = DateTime.now().add(const Duration(seconds: 12));
     final batches = Map<String, Set<String>>.of(_queuedPrices);
     _queuedPrices.clear();
     for (final batch in batches.entries) {
@@ -73,9 +74,13 @@ class CoinGeckoRepository implements CexRepository {
           start + 100 > ids.length ? ids.length : start + 100,
         );
         try {
+          final remaining = deadline.difference(DateTime.now());
+          if (remaining <= Duration.zero) {
+            throw TimeoutException('CoinGecko batch deadline exceeded');
+          }
           final values = await coinGeckoProvider
               .fetchCoinPrices(chunk, vsCurrencies: [batch.key])
-              .timeout(const Duration(seconds: 10));
+              .timeout(remaining);
           for (final id in chunk) {
             final key = '${batch.key}:$id';
             final completer = _pendingPrices.remove(key)!;
