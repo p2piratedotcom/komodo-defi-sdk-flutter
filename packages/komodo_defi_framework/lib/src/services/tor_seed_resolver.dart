@@ -19,6 +19,11 @@ class TorSeedResolver {
     );
     final iterator = StreamIterator<List<int>>(socket);
     final pending = Queue<int>();
+    // A caller-side Future.timeout does not cancel a stalled SOCKS read.
+    final handshakeDeadline = Timer(
+      const Duration(seconds: 15),
+      socket.destroy,
+    );
 
     Future<int> readByte() async {
       while (pending.isEmpty) {
@@ -61,6 +66,7 @@ class TorSeedResolver {
         Uint8List.fromList(address),
       ).address;
     } finally {
+      handshakeDeadline.cancel();
       await iterator.cancel();
       socket.destroy();
     }
@@ -70,7 +76,7 @@ class TorSeedResolver {
     final resolved = <String>[];
     for (final host in hosts) {
       try {
-        resolved.add(await resolve(host).timeout(const Duration(seconds: 15)));
+        resolved.add(await resolve(host));
       } catch (_) {
         // Another seed can still provide connectivity; never resolve locally.
       }

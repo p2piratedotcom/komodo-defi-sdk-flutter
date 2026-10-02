@@ -17,27 +17,33 @@ class BinanceProvider implements IBinanceProvider {
   /// Defaults to 'https://api.binance.com/api/v3'.
   final String apiUrl;
 
-  static DateTime? _retryAfter;
+  static final Map<String, DateTime> _retryAfterByHost = {};
   static const requestTimeout = Duration(seconds: 4);
 
   Future<http.Response> _get(Uri uri) async {
-    if (_retryAfter?.isAfter(DateTime.now()) ?? false) {
+    final host = uri.host;
+    if (_retryAfterByHost[host]?.isAfter(DateTime.now()) ?? false) {
       throw http.ClientException('Binance temporarily unavailable');
     }
-    _retryAfter = null;
+    _retryAfterByHost.remove(host);
     final client = http.Client();
     try {
       final response = await client.get(uri).timeout(requestTimeout);
       if ([403, 429, 451].contains(response.statusCode)) {
-        _retryAfter = DateTime.now().add(const Duration(minutes: 5));
+        _retryAfterByHost[host] = DateTime.now().add(
+          const Duration(minutes: 5),
+        );
         throw http.ClientException('Binance HTTP ${response.statusCode}');
       }
       return response;
     } on TimeoutException {
-      _retryAfter = DateTime.now().add(const Duration(minutes: 1));
+      _retryAfterByHost[host] = DateTime.now().add(const Duration(minutes: 1));
       rethrow;
     } on http.ClientException {
-      _retryAfter ??= DateTime.now().add(const Duration(minutes: 1));
+      _retryAfterByHost.putIfAbsent(
+        host,
+        () => DateTime.now().add(const Duration(minutes: 1)),
+      );
       rethrow;
     } finally {
       // Closing also aborts a timed-out connection instead of leaving it running.

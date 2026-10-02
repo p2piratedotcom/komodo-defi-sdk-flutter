@@ -120,6 +120,18 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
         }
         environment['LD_PRELOAD'] = libraryPath;
         environment['TORSOCKS_CONF_FILE'] = configPath;
+        // The ELF loader can ignore an invalid LD_PRELOAD and still start KDF.
+        // Probe a dynamic executable under the exact launch environment first.
+        final probe = await Process.run('/bin/cat', [
+          '/proc/self/maps',
+        ], environment: environment);
+        final loadedPath = File(libraryPath).resolveSymbolicLinksSync();
+        if (probe.exitCode != 0 ||
+            !(probe.stdout as String)
+                .split('\n')
+                .any((line) => line.trimRight().endsWith(loadedPath))) {
+          throw StateError('Tor transport library could not be preloaded');
+        }
         _logCallback(
           'Starting KDF NetID ${params['netid']} via Tor SOCKS on '
           '127.0.0.1:${KdfTorConfig.socksPort}',

@@ -38,9 +38,18 @@ class SeedNodeService {
     bool filterForWeb = kIsWeb,
   }) async {
     if (KdfTorConfig.enabled) {
-      final bundled = await loadBundledSeedNodes(filterForWeb: false);
-      final resolved = await TorSeedResolver.resolveAll(bundled);
-      return (seedNodes: resolved, netId: kPirateKdfNetId);
+      try {
+        final bundled = await loadBundledSeedNodes(filterForWeb: false);
+        final resolved = await TorSeedResolver.resolveAll(bundled);
+        return (seedNodes: resolved, netId: kPirateKdfNetId);
+      } catch (_) {
+        // Resolve the emergency hostname through SOCKS too. Never use the
+        // clear-net updater or the platform DNS resolver in Tor mode.
+        final resolved = await TorSeedResolver.resolveAll(
+          SeedNodeValidator.getDefaultSeedNodes(),
+        );
+        return (seedNodes: resolved, netId: kPirateKdfNetId);
+      }
     }
     try {
       final config = await _getRuntimeConfig();
