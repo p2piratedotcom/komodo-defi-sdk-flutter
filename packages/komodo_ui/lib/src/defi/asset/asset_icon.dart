@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 import 'package:komodo_defi_types/komodo_defi_types.dart';
@@ -70,6 +72,12 @@ class AssetIcon extends StatelessWidget {
     _AssetIconResolver.clearCaches();
   }
 
+  /// Uses icons from a verified P2Pirate Assets snapshot on desktop.
+  static void setRuntimeIconDirectory(String? directory) {
+    _AssetIconResolver.runtimeIconDirectory = directory;
+    _AssetIconResolver.clearCaches();
+  }
+
   /// Registers a custom icon for a given coin abbreviation.
   ///
   /// The [imageProvider] will be used instead of the default asset image
@@ -111,18 +119,14 @@ class AssetIcon extends StatelessWidget {
     );
   }
 
-  /// Checks if the asset icon exists in the local assets **based solely
-  /// on the internal cache**.
+  /// Checks registered and installed P2Pirate icons directly, then consults
+  /// the bundled-asset existence cache.
   ///
-  /// This method does **not** perform a live check. It only returns `true` if
-  /// the icon has previously been loaded or pre-cached
-  /// and its existence has been recorded in the internal `_assetExistenceCache`
-  /// If the icon has not yet been loaded or pre-cached,
-  /// this method will return `false` even if the icon actually exists.
+  /// A bundled icon that has not been loaded or pre-cached still returns
+  /// `false` until its existence is recorded in `_assetExistenceCache`.
   ///
-  /// **Note:** The result depends entirely on prior caching or loading attempts
-  /// To ensure up-to-date results, call [precacheAssetIcon]
-  /// before using this method.
+  /// To ensure an up-to-date result for bundled icons, call
+  /// [precacheAssetIcon] first.
   ///
   /// Returns true if the icon is known to exist (per cache), false otherwise.
   static bool assetIconExists(String assetIconId) {
@@ -159,6 +163,8 @@ class _AssetIconResolver extends StatelessWidget {
   static final Map<String, ImageProvider> _customIconsCache = {};
   static Set<String>? _bundledAssetPaths;
   static Future<Set<String>>? _bundledAssetPathsLoader;
+  static String? runtimeIconDirectory;
+  static final Map<String, bool> _runtimeIconExists = {};
 
   static void registerCustomIcon(AssetId assetId, ImageProvider imageProvider) {
     final sanitizedId = assetId.symbol.configSymbol.toLowerCase();
@@ -170,11 +176,20 @@ class _AssetIconResolver extends StatelessWidget {
     _customIconsCache.clear();
     _bundledAssetPaths = null;
     _bundledAssetPathsLoader = null;
+    _runtimeIconExists.clear();
   }
 
   String get _sanitizedId =>
       AssetSymbol.symbolFromConfigId(assetId).toLowerCase();
   String get _imagePath => '$_coinImagesFolder$_sanitizedId.png';
+
+  File? get _runtimeIcon {
+    final directory = runtimeIconDirectory;
+    if (directory == null) return null;
+    final file = File('$directory/$_sanitizedId.png');
+    if (!(_runtimeIconExists[_sanitizedId] ??= file.existsSync())) return null;
+    return file;
+  }
 
   static Future<Set<String>> _loadBundledAssetPaths() async {
     if (_bundledAssetPaths != null) {
@@ -239,6 +254,19 @@ class _AssetIconResolver extends StatelessWidget {
         return;
       }
 
+      final runtimeIcon = resolver._runtimeIcon;
+      if (runtimeIcon != null) {
+        if (!context.mounted) return;
+        final succeeded = await _didImagePrecacheSucceed(
+          FileImage(runtimeIcon),
+          context,
+        );
+        if (throwExceptions && !succeeded) {
+          throw Exception('Failed to pre-cache P2Pirate icon for $asset.');
+        }
+        return;
+      }
+
       final assetImage = AssetImage(resolver._imagePath);
       final bundledAssetExists = await _isBundledAssetDeclared(
         resolver._imagePath,
@@ -266,6 +294,10 @@ class _AssetIconResolver extends StatelessWidget {
 
   static bool assetIconExists(String assetIconId) {
     final resolver = _AssetIconResolver(assetId: assetIconId, size: 20);
+    if (_customIconsCache.containsKey(resolver._sanitizedId) ||
+        resolver._runtimeIcon != null) {
+      return true;
+    }
     return _assetExistenceCache[resolver._imagePath] ?? false;
   }
 
@@ -306,6 +338,16 @@ class _AssetIconResolver extends StatelessWidget {
           debugPrint('Error loading custom icon for $assetId: $error');
           return _buildFallbackIcon(context);
         },
+      );
+    }
+
+    final runtimeIcon = _runtimeIcon;
+    if (runtimeIcon != null) {
+      return Image.file(
+        runtimeIcon,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (context, error, stackTrace) =>
+            _buildFallbackIcon(context),
       );
     }
 

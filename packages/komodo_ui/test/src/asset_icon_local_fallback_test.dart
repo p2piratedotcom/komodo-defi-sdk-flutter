@@ -12,9 +12,9 @@ void main() {
 
     expect(find.text('ARR'), findsOneWidget);
     expect(
-      tester.widgetList<Image>(find.byType(Image)).every(
-        (image) => image.image is! NetworkImage,
-      ),
+      tester
+          .widgetList<Image>(find.byType(Image))
+          .every((image) => image.image is! NetworkImage),
       isTrue,
     );
   });

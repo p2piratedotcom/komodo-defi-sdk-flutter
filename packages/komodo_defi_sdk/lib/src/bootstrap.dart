@@ -97,7 +97,7 @@ Future<void> bootstrap({
   // Asset history storage singletons
   container.registerLazySingleton(AssetHistoryStorage.new);
   container.registerSingletonAsync<KomodoAssetsUpdateManager>(
-    () async => KomodoAssetsUpdateManager(),
+    () async => KomodoAssetsUpdateManager(enableAutoUpdate: false),
   );
 
   // Activation configuration service (must be available before ActivationManager)
