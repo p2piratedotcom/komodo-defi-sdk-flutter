@@ -12,6 +12,10 @@ abstract class IPubkeyManager {
   /// Get pubkeys for a given asset, handling HD/non-HD differences internally
   Future<AssetPubkeys> getPubkeys(Asset asset);
 
+  /// Fetches current addresses/balances from KDF without using persisted or
+  /// memory-cached pubkeys, and notifies address watchers.
+  Future<AssetPubkeys> refreshPubkeys(Asset asset);
+
   /// Watch pubkeys for a given asset, emitting the initial state if available
   /// and polling for updates at a fixed interval. Optionally activates asset.
   Stream<AssetPubkeys> watchPubkeys(
@@ -48,7 +52,10 @@ class PubkeyManager implements IPubkeyManager {
     this._activationCoordinator, {
     PubkeysStorage? storage,
     Duration pollingInterval = const Duration(seconds: 30),
-  }) : assert(pollingInterval > Duration.zero, 'Polling interval must be positive'),
+  }) : assert(
+         pollingInterval > Duration.zero,
+         'Polling interval must be positive',
+       ),
        _storage = storage ?? HivePubkeysStorage(),
        _pollingInterval = pollingInterval {
     _authSubscription = _auth.authStateChanges.listen(_handleAuthStateChanged);
@@ -76,6 +83,7 @@ class PubkeyManager implements IPubkeyManager {
   StreamSubscription<KdfUser?>? _authSubscription;
   WalletId? _currentWalletId;
   bool _isDisposed = false;
+  int _stateEpoch = 0;
   final Duration _pollingInterval;
 
   /// Get pubkeys for a given asset, handling HD/non-HD differences internally
@@ -125,6 +133,27 @@ class PubkeyManager implements IPubkeyManager {
     return _fetchFreshPubkeys(asset, walletId);
   }
 
+  @override
+  Future<AssetPubkeys> refreshPubkeys(Asset asset) async {
+    if (_isDisposed) throw StateError('PubkeyManager has been disposed');
+    final epoch = _stateEpoch;
+    final user = await _auth.currentUser;
+    if (user == null) throw AuthException.notSignedIn();
+    if (_isDisposed || epoch != _stateEpoch) {
+      throw StateError('Wallet changed during pubkey refresh');
+    }
+    final fresh = await _fetchFreshPubkeys(asset, user.walletId);
+    final current = await _auth.currentUser;
+    if (_isDisposed ||
+        epoch != _stateEpoch ||
+        current?.walletId != user.walletId) {
+      throw StateError('Wallet changed during pubkey refresh');
+    }
+    final controller = _pubkeysControllers[asset.id];
+    if (controller != null && !controller.isClosed) controller.add(fresh);
+    return fresh;
+  }
+
   /// Create a new pubkey for an asset if supported
   @override
   Future<PubkeyInfo> createNewPubkey(Asset asset) async {
@@ -172,6 +201,7 @@ class PubkeyManager implements IPubkeyManager {
     Asset asset,
     WalletId walletId,
   ) async {
+    final epoch = _stateEpoch;
     final existing = _inFlightPubkeyRequests[asset.id];
     if (existing != null) return existing;
 
@@ -184,6 +214,12 @@ class PubkeyManager implements IPubkeyManager {
         strategy: strategy,
       );
       final pubkeys = await strategy.getPubkeys(asset.id, _client);
+      final current = await _auth.currentUser;
+      if (_isDisposed ||
+          epoch != _stateEpoch ||
+          current?.walletId != walletId) {
+        throw StateError('Wallet changed during pubkey fetch');
+      }
       _pubkeysCache[asset.id] = pubkeys;
       _persistPubkeysForWallet(walletId, asset, pubkeys).ignore();
       return pubkeys;
@@ -193,7 +229,9 @@ class PubkeyManager implements IPubkeyManager {
     try {
       return await future;
     } finally {
-      _inFlightPubkeyRequests.remove(asset.id);
+      if (identical(_inFlightPubkeyRequests[asset.id], future)) {
+        _inFlightPubkeyRequests.remove(asset.id);
+      }
     }
   }
 
@@ -496,6 +534,8 @@ class PubkeyManager implements IPubkeyManager {
   /// Note: This method does NOT restart watchers. New watchers will be created
   /// on-demand when clients call watchPubkeys() again.
   Future<void> _resetState() async {
+    _stateEpoch++;
+    _inFlightPubkeyRequests.clear();
     _logger.fine('Resetting state');
     final stopwatch = Stopwatch()..start();
 

@@ -26,6 +26,9 @@ abstract class IBalanceManager {
   /// May throw [TimeoutException] if balance fetch times out.
   Future<BalanceInfo> getBalance(AssetId assetId);
 
+  /// Bypasses cached pubkeys and emits a fresh KDF balance to live watchers.
+  Future<BalanceInfo> refreshBalance(AssetId assetId);
+
   /// Gets a stream of balance updates for an asset.
   /// The stream will emit the current balance immediately if available,
   /// and then emit updates whenever the balance changes.
@@ -294,6 +297,32 @@ class BalanceManager implements IBalanceManager {
       // Rethrow with more context
       throw StateError('Failed to get balance for ${assetId.name}: $e');
     }
+  }
+
+  @override
+  Future<BalanceInfo> refreshBalance(AssetId assetId) async {
+    if (_isDisposed) throw StateError('BalanceManager has been disposed');
+    final pubkeys = _pubkeyManager;
+    if (pubkeys == null) throw StateError('PubkeyManager is not initialized');
+    final epoch = _stateEpoch;
+    final user = await _auth.currentUser;
+    if (user == null) throw AuthException.notSignedIn();
+    final asset = _assetLookup.fromId(assetId);
+    if (asset == null) throw ArgumentError('Asset not found: $assetId');
+    if (_isDisposed || epoch != _stateEpoch) {
+      throw StateError('Wallet changed during balance refresh');
+    }
+    final balance = (await pubkeys.refreshPubkeys(asset)).balance;
+    final current = await _auth.currentUser;
+    if (_isDisposed ||
+        epoch != _stateEpoch ||
+        current?.walletId != user.walletId) {
+      throw StateError('Wallet changed during balance refresh');
+    }
+    _balanceCache[assetId] = balance;
+    final controller = _balanceControllers[assetId];
+    if (controller != null && !controller.isClosed) controller.add(balance);
+    return balance;
   }
 
   @override
