@@ -78,6 +78,7 @@ class PubkeyManager implements IPubkeyManager {
   // Deduplicate concurrent getPubkeys requests per asset
   final Map<AssetId, Future<AssetPubkeys>> _inFlightPubkeyRequests = {};
   final Map<AssetId, Future<AssetPubkeys>> _inFlightRefreshRequests = {};
+  final Set<AssetId> _pendingExplicitRefreshes = {};
   final Map<String, DateTime> _hdAddressScanRetryAfter = {};
   static const Duration _hdAddressScanRetryCooldown = Duration(minutes: 2);
 
@@ -145,8 +146,13 @@ class PubkeyManager implements IPubkeyManager {
     }
     // Coalesce explicit refreshes separately from polling/hydration reads.
     final pendingRefresh = _inFlightRefreshRequests[asset.id];
-    if (pendingRefresh != null) return pendingRefresh;
-    final future = () async {
+    if (pendingRefresh != null) {
+      // Its snapshot may precede this request; require one trailing read.
+      _pendingExplicitRefreshes.add(asset.id);
+      return pendingRefresh;
+    }
+    late final Future<AssetPubkeys> future;
+    future = () async {
       final olderRead = _inFlightPubkeyRequests[asset.id];
       if (olderRead != null) {
         try {
@@ -167,15 +173,26 @@ class PubkeyManager implements IPubkeyManager {
           identical(_inFlightPubkeyRequests[asset.id], olderRead)) {
         _inFlightPubkeyRequests.remove(asset.id)?.ignore();
       }
-      final fresh = await _fetchFreshPubkeys(asset, user.walletId);
-      final current = await _auth.currentUser;
-      if (_isDisposed ||
-          epoch != _stateEpoch ||
-          current?.walletId != user.walletId) {
-        throw StateError('Wallet changed during pubkey refresh');
+      AssetPubkeys fresh;
+      do {
+        // Requests received while waiting for the older read are covered by
+        // this new fetch. Requests during it coalesce into a trailing fetch.
+        _pendingExplicitRefreshes.remove(asset.id);
+        fresh = await _fetchFreshPubkeys(asset, user.walletId);
+        final current = await _auth.currentUser;
+        if (_isDisposed ||
+            epoch != _stateEpoch ||
+            current?.walletId != user.walletId) {
+          throw StateError('Wallet changed during pubkey refresh');
+        }
+        final controller = _pubkeysControllers[asset.id];
+        if (controller != null && !controller.isClosed) controller.add(fresh);
+      } while (_pendingExplicitRefreshes.remove(asset.id));
+      // Remove ownership before completing the future so another caller can
+      // never join an already-completed read while outer cleanup is pending.
+      if (identical(_inFlightRefreshRequests[asset.id], future)) {
+        _inFlightRefreshRequests.remove(asset.id)?.ignore();
       }
-      final controller = _pubkeysControllers[asset.id];
-      if (controller != null && !controller.isClosed) controller.add(fresh);
       return fresh;
     }();
     _inFlightRefreshRequests[asset.id] = future;
@@ -184,6 +201,7 @@ class PubkeyManager implements IPubkeyManager {
     } finally {
       if (identical(_inFlightRefreshRequests[asset.id], future)) {
         _inFlightRefreshRequests.remove(asset.id)?.ignore();
+        _pendingExplicitRefreshes.remove(asset.id);
       }
     }
   }
@@ -571,6 +589,7 @@ class PubkeyManager implements IPubkeyManager {
     _stateEpoch++;
     _inFlightPubkeyRequests.clear();
     _inFlightRefreshRequests.clear();
+    _pendingExplicitRefreshes.clear();
     _logger.fine('Resetting state');
     final stopwatch = Stopwatch()..start();
 
