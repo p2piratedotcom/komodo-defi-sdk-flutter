@@ -108,8 +108,11 @@ extension KdfAuthServiceOperationsExtension on KdfAuthService {
           return;
         }
         final currentUser = await _secureStorage.getUser(activeWallet);
-        if (currentUser != null &&
-            currentUser.walletId != _lastEmittedUser?.walletId) {
+        if (currentUser == null) {
+          // KDF successfully identified an active wallet that this client does
+          // not own locally. The previous wallet session is no longer valid.
+          if (_lastEmittedUser != null) _emitAuthStateChange(null);
+        } else if (currentUser.walletId != _lastEmittedUser?.walletId) {
           _emitAuthStateChange(currentUser);
         }
       });
