@@ -89,6 +89,21 @@ extension KdfAuthServiceOperationsExtension on KdfAuthService {
     }
   }
 
+  /// Call under the auth mutex. Failed reads cannot prove a process exit.
+  Future<bool> _clearConfirmedStoppedSession() async {
+    try {
+      final stopped = await _kdfFramework.hasConfirmedStopped().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => false,
+      );
+      if (!stopped) return false;
+      if (_lastEmittedUser != null) _emitAuthStateChange(null);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _checkKdfHealth() async {
     try {
       await _runReadOperation(() async {
@@ -96,6 +111,7 @@ extension KdfAuthServiceOperationsExtension on KdfAuthService {
           const Duration(seconds: 5),
           onTimeout: () => false,
         )) {
+          if (await _clearConfirmedStoppedSession()) return;
           _logger.warning('KDF health probe unavailable; preserving session');
           return;
         }

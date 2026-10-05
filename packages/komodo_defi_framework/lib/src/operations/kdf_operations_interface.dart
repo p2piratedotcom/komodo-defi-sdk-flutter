@@ -5,6 +5,12 @@ import 'package:flutter/foundation.dart';
 import 'package:komodo_defi_framework/komodo_defi_framework.dart';
 import 'package:komodo_defi_types/komodo_defi_type_utils.dart';
 
+/// Optional lifecycle proof for adapters that own a child process.
+/// Missing RPC data or an adapter with no owned child is not an exit proof.
+abstract interface class IKdfConfirmedTermination {
+  bool get hasConfirmedStopped;
+}
+
 enum MainStatus {
   notRunning,
   noContext,

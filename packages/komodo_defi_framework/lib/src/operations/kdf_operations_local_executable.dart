@@ -13,7 +13,8 @@ import 'package:komodo_defi_types/komodo_defi_type_utils.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-class KdfOperationsLocalExecutable implements IKdfOperations {
+class KdfOperationsLocalExecutable
+    implements IKdfOperations, IKdfConfirmedTermination {
   KdfOperationsLocalExecutable._(
     this._logCallback,
     this._kdfRemote, {
@@ -53,6 +54,12 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
   // they are used. E.g. if the process fails to start, or during the
   // cleanup process.
   Process? _process;
+  Process? _lastExitedProcess;
+
+  @override
+  bool get hasConfirmedStopped =>
+      _lastExitedProcess != null &&
+      (_process == null || _process == _lastExitedProcess);
   StreamSubscription<List<int>>? stdoutSub;
   StreamSubscription<List<int>>? stderrSub;
 
@@ -179,23 +186,40 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
       _logCallback('[ERROR]: ${String.fromCharCodes(event)}');
     });
 
+    final processStdout = stdoutSub;
+    final processStderr = stderrSub;
     newProcess.exitCode
-        .then((exitCode) async => _cleanUpOnProcessExit(exitCode, tempDir))
+        .then(
+          (exitCode) async => _cleanUpOnProcessExit(
+            newProcess,
+            exitCode,
+            tempDir,
+            processStdout,
+            processStderr,
+          ),
+        )
         .ignore();
   }
 
-  Future<void> _cleanUpOnProcessExit(int exitCode, Directory tempDir) async {
+  Future<void> _cleanUpOnProcessExit(
+    Process process,
+    int exitCode,
+    Directory tempDir,
+    StreamSubscription<List<int>>? processStdout,
+    StreamSubscription<List<int>>? processStderr,
+  ) async {
+    // Release only this exited instance; delayed cleanup cannot erase a new one.
+    _lastExitedProcess = process;
+    if (_process == process) _process = null;
     try {
       _logCallback('KDF process exited with code: $exitCode');
-      await stdoutSub?.cancel();
-      await stderrSub?.cancel();
+      await processStdout?.cancel();
+      await processStderr?.cancel();
 
       await tempDir.delete(recursive: true);
       _logCallback('Temporary directory deleted successfully.');
     } catch (error) {
       _logCallback('Failed to delete temporary directory: $error');
-    } finally {
-      _process = null;
     }
   }
 
@@ -246,21 +270,27 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
 
   @override
   Future<MainStatus> kdfMainStatus() async {
-    if (_process != null && _process!.pid > 0 && await _kdfRemote.isRunning()) {
-      return MainStatus.rpcIsUp;
+    final process = _process;
+    if (process == null || process.pid <= 0) return MainStatus.notRunning;
+    try {
+      if (await _kdfRemote.isRunning()) return MainStatus.rpcIsUp;
+    } catch (_) {
+      // An owned child with an unavailable RPC is not a confirmed exit.
     }
-    return MainStatus.notRunning;
+    return _process == null ? MainStatus.notRunning : MainStatus.noRpc;
   }
 
   @override
   Future<StopStatus> kdfStop() async {
     var stopStatus = StopStatus.ok;
+    final process = _process;
+    var processExited = false;
     try {
       stopStatus = await _kdfRemote.kdfStop().catchError(
         (_) => StopStatus.errorStopping,
       );
 
-      if (_process == null || _process?.pid == 0) {
+      if (process == null || process.pid == 0) {
         _logCallback('Process is not running, skipping shutdown.');
         return StopStatus.notRunning;
       }
@@ -270,20 +300,30 @@ class KdfOperationsLocalExecutable implements IKdfOperations {
         stderrSub?.cancel() ?? Future<void>.value(),
       ]);
 
-      if (_process != null && _process!.pid != 0) {
-        await _process?.exitCode.timeout(
-          const Duration(seconds: 10),
-          onTimeout: () {
-            _logCallback('KDF Process did not terminate in time.');
-            stopStatus = StopStatus.errorStopping;
-            return -1; // not used
-          },
-        );
+      if (process.pid != 0) {
+        await process.exitCode
+            .then((code) {
+              processExited = true;
+              return code;
+            })
+            .timeout(
+              const Duration(seconds: 10),
+              onTimeout: () {
+                _logCallback('KDF Process did not terminate in time.');
+                stopStatus = StopStatus.errorStopping;
+                return -1; // not used
+              },
+            );
       }
 
-      _process = null;
-      _logCallback('KDF process cleanup complete');
+      if (processExited && _process == process) _process = null;
+      _logCallback(
+        processExited
+            ? 'KDF process cleanup complete'
+            : 'KDF shutdown uncertain; retaining owned process',
+      );
     } catch (e, stack) {
+      stopStatus = StopStatus.errorStopping;
       _logCallback('Critical error during KDF cleanup: $e\n$stack');
     }
 

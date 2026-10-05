@@ -168,10 +168,24 @@ class KomodoDefiFramework implements ApiClient {
     return status;
   }
 
+  /// Process/main status is authoritative; RPC unavailability is not shutdown.
+  /// Use the owned operations directly, without the cross-instance RPC fallback.
+  Future<bool> hasConfirmedStopped() async {
+    final operations = _kdfOperations;
+    if (operations is IKdfConfirmedTermination) {
+      return (operations as IKdfConfirmedTermination).hasConfirmedStopped;
+    }
+    // Native/WASM main status can prove shutdown. Remote adapters report noRpc.
+    return await operations.kdfMainStatus() == MainStatus.notRunning;
+  }
+
   Future<StopStatus> kdfStop() async {
     _log('Stopping KDF...');
     final result = await _kdfOperations.kdfStop();
     _log('KDF stop result: $result');
+    if (result == StopStatus.errorStopping) {
+      throw StateError('KDF shutdown was not confirmed');
+    }
     // Await a max of 5 seconds for KDF to stop. Check every 500ms.
     for (var i = 0; i < 10; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 500));
