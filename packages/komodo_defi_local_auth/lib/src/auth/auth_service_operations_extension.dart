@@ -89,21 +89,49 @@ extension KdfAuthServiceOperationsExtension on KdfAuthService {
     }
   }
 
+  /// Call under the auth mutex. Failed reads cannot prove a process exit.
+  Future<bool> _clearConfirmedStoppedSession() async {
+    try {
+      final stopped = await _kdfFramework.hasConfirmedStopped().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => false,
+      );
+      if (!stopped) return false;
+      if (_lastEmittedUser != null) _emitAuthStateChange(null);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _checkKdfHealth() async {
     try {
-      final isRunning = await _kdfFramework.isRunning();
-      // Bypass cached user to detect external changes accurately
-      final currentUser = await _getActiveUser();
-
-      // If KDF is not running or we're in no-auth mode but previously had a user,
-      // emit signed out state
-      if ((!isRunning || currentUser == null) && _lastEmittedUser != null) {
-        _emitAuthStateChange(null);
-      } else if (currentUser != null &&
-          currentUser.walletId != _lastEmittedUser?.walletId) {
-        // User state changed
-        _emitAuthStateChange(currentUser);
-      }
+      await _runReadOperation(() async {
+        if (!await _verifyKdfHealthy().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => false,
+        )) {
+          if (await _clearConfirmedStoppedSession()) return;
+          _logger.warning('KDF health probe unavailable; preserving session');
+          return;
+        }
+        // Only a successful wallet-names RPC can prove that authentication
+        // ended. isRunning()==false can also mean a transient connection error.
+        final activeWallet =
+            (await _client.rpc.wallet.getWalletNames()).activatedWallet;
+        if (activeWallet == null) {
+          if (_lastEmittedUser != null) _emitAuthStateChange(null);
+          return;
+        }
+        final currentUser = await _secureStorage.getUser(activeWallet);
+        if (currentUser == null) {
+          // KDF successfully identified an active wallet that this client does
+          // not own locally. The previous wallet session is no longer valid.
+          if (_lastEmittedUser != null) _emitAuthStateChange(null);
+        } else if (currentUser.walletId != _lastEmittedUser?.walletId) {
+          _emitAuthStateChange(currentUser);
+        }
+      });
     } catch (e, s) {
       // Log the error but don't immediately sign out on transient RPC failures.
       // The next health check (in 5 minutes) will verify if this is persistent.
