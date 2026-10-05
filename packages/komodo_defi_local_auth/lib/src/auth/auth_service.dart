@@ -856,8 +856,8 @@ class KdfAuthService implements IAuthService {
       // session under the write lock so a login completed during the probe can
       // never be stopped by a late health check.
       return await _lockWriteOperation(() async {
-        if (_lastEmittedUser != null) {
-          if (await _clearConfirmedStoppedSession()) return false;
+        if (_lastEmittedUser != null &&
+            !(await _clearConfirmedStoppedSession())) {
           _logger.warning(
             '[$_sessionId] KDF RPC unavailable; preserving the active session. '
             'Automatic stop/restart is disabled while authenticated.',

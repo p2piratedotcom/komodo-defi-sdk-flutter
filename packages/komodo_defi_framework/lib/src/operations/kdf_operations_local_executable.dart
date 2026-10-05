@@ -316,7 +316,11 @@ class KdfOperationsLocalExecutable
             );
       }
 
-      if (processExited && _process == process) _process = null;
+      if (processExited) {
+        // The owned child's exit is stronger evidence than a lost RPC reply.
+        stopStatus = StopStatus.ok;
+        if (_process == process) _process = null;
+      }
       _logCallback(
         processExited
             ? 'KDF process cleanup complete'
