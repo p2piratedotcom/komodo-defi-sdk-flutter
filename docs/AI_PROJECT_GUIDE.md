@@ -96,8 +96,8 @@ The SDK does not decide to disable the wallet's privacy route on a timeout.
 
 P2Pirate owns consent and snapshot verification for catalog/artwork downloads.
 Automatic build/runtime replacement of that catalog is disabled in the relevant
-fork paths. Runtime icon selection uses the verified directory, then declared
-bundled/custom images, and a local badge when missing. Preserve offline fallback
+fork paths. Icon selection checks custom overrides first, then verified runtime
+PNGs, bundled images, and a local badge when missing. Preserve offline fallback
 and licensing boundaries; do not introduce arbitrary image/network fetches in
 widget build methods. See [P2Pirate coin assets](P2PIRATE_COIN_ASSETS.md).
 
