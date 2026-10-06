@@ -6,6 +6,14 @@
 
 # Komodo DeFi SDK for Flutter
 
+## Start here with an AI or as a new contributor
+
+Read [AGENTS.md](AGENTS.md) first, then the [AI/contributor project guide](docs/AI_PROJECT_GUIDE.md).
+They explain repository scope, architecture, safe setup, limits and cross-repository
+contracts. Relevant behavior/contract changes must review these guides in the same
+PR; use the guide-maintenance section of the PR template.
+
+
 A Flutter SDK for building cross-platform DeFi apps on top of the Komodo DeFi Framework (KDF) with a few lines of code. The SDK provides a high-level, batteries-included developer experience while still exposing the low-level framework and RPC methods when you need them.
 
 Maintained by [GLEEC](https://www.gleec.com).
